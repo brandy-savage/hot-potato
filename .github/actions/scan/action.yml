@@ -1,0 +1,57 @@
+name: Hot Potato Scan
+description: Scan files for prompt injection payloads using hot-potato's static analyzer
+
+inputs:
+  paths:
+    description: >
+      Newline-separated list of file paths to scan.
+      If omitted, scans all files changed in the current PR vs base branch.
+    required: false
+    default: ""
+  fail-on:
+    description: Minimum severity that causes a failure (detected|low|medium|high|critical)
+    required: false
+    default: detected
+  python-version:
+    description: Python version to use
+    required: false
+    default: "3.11"
+
+outputs:
+  hits:
+    description: Number of files with detections
+    value: ${{ steps.scan.outputs.hits }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install hot-potato
+      shell: bash
+      run: pip install git+https://github.com/brandy-savage/hot-potato.git --quiet
+
+    - name: Build file list
+      shell: bash
+      id: filelist
+      run: |
+        if [ -n "${{ inputs.paths }}" ]; then
+          echo "${{ inputs.paths }}" > /tmp/hp_files.txt
+        else
+          git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/hp_files.txt
+        fi
+        echo "files=$(wc -l < /tmp/hp_files.txt)" >> "$GITHUB_OUTPUT"
+
+    - name: Scan for prompt injection
+      shell: bash
+      id: scan
+      env:
+        HP_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        # Download scan script from the hot-potato repo
+        curl -fsSL https://raw.githubusercontent.com/brandy-savage/hot-potato/main/.github/scripts/scan_pr.py \
+          -o /tmp/scan_pr.py
+        python3 /tmp/scan_pr.py /tmp/hp_files.txt
+        echo "hits=$?" >> "$GITHUB_OUTPUT"

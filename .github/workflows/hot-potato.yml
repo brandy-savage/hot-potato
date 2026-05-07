@@ -1,0 +1,68 @@
+name: Hot Potato — Prompt Injection Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  scan:
+    name: Scan changed files for prompt injection
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install hot-potato
+        run: pip install . --quiet
+
+      - name: Get changed files
+        id: changed
+        run: |
+          git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep -v '^examples/wild-potatoes/' \
+            | grep -v '^quarantine/' \
+            > changed_files.txt
+          echo "Found $(wc -l < changed_files.txt) changed file(s)"
+          cat changed_files.txt
+
+      - name: Scan for prompt injection
+        env:
+          HP_FAIL_ON: detected
+        run: python3 .github/scripts/scan_pr.py changed_files.txt
+
+      - name: Comment on PR (on failure)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: [
+                "## 🥔 Hot Potato: Prompt Injection Detected",
+                "",
+                "One or more files added in this PR contain prompt injection signals.",
+                "Check the **Hot Potato** workflow run for details and file annotations.",
+                "",
+                "**What this means:** The static scanner found patterns commonly used in",
+                "prompt injection attacks (encoded payloads, injection phrases, tool call",
+                "patterns, social engineering framing).",
+                "",
+                "**If this is a false positive:** The file likely contains injection examples",
+                "for educational/research purposes. Review the annotations and consider moving",
+                "the content to `examples/wild-potatoes/` or updating the scanner threshold.",
+                "",
+                "_Scanned by [hot-potato](https://github.com/brandy-savage/hot-potato)_",
+              ].join("\n")
+            })
