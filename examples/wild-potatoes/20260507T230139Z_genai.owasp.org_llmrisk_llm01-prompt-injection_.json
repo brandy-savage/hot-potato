@@ -1,0 +1,33 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [],
+  "content_signals": [
+    "LM01:2025 Prompt Injection - OWASP Gen AI Security Proje",
+    "LM01:2025 Prompt Injection\" />\n\t<meta property=\"og:descr",
+    "ontent=\"A Prompt Injection Vulnerability occurs when use",
+    "therefore prompt injections do not need to be human-visi",
+    "he model. Prompt Injection vulnerabilities exist in how",
+    "\":\"LLM01: Prompt Injection\"}]},{\"@type\":\"WebSite\",\"@id\":",
+    "LM01:2025 Prompt Injection\t</span>\n</h2>\n\n\t\t\t\t</div>",
+    "16px;\">A Prompt Injection Vulnerability occurs when use",
+    "ir=\"auto\">Prompt Injection vulnerabilities exist in how",
+    "mitigate prompt injection vulnerabilities.</p>\n<p dir=\"",
+    "to\">While prompt injection and jailbreaking are related",
+    "angeably. Prompt injection involves manipulating model r",
+    "a form of prompt injection where the attacker provides i",
+    "mitigate prompt injection attacks, but effective preven",
+    ">Types of Prompt Injection Vulnerabilities</h3>\n<p>&nbsp",
+    "1\">Direct Prompt Injections</h4>\n</div>\n<p dir=\"auto\">Di",
+    "o\">Direct prompt injections occur when a user&#8217;s pr",
+    ">Indirect Prompt Injections</h4>\n</div>\n<p dir=\"auto\">In",
+    ">Indirect prompt injections occur when an LLM accepts in",
+    "uccessful prompt injection attack can vary greatly and a"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "https://genai.owasp.org/llmrisk/llm01-prompt-injection/",
+    "timestamp": "20260507T230139Z"
+  }
+}

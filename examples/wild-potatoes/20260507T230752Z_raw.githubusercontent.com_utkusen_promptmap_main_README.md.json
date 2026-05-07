@@ -1,0 +1,15 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [],
+  "content_signals": [
+    "automated prompt injection scanner for custom LLM applic",
+    "erable to prompt injection on the first attempt. However"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "https://raw.githubusercontent.com/utkusen/promptmap/main/README.md",
+    "timestamp": "20260507T230752Z"
+  }
+}

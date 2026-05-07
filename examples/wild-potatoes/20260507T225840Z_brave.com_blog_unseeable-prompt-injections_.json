@@ -1,0 +1,30 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [],
+  "content_signals": [
+    "erable to prompt injection attacks via screenshots and h",
+    "Unseeable prompt injections in screenshots: more vulnera",
+    "indirect prompt injection is not an isolated issue, but",
+    "> about a prompt injection in Opera Neon that we respons",
+    "ty-comet\">Prompt injection via screenshots in Perplexity",
+    "e to hide prompt injection instructions in images using",
+    "0\" title=\"Prompt Injection in Comet Browser\" webkitallow",
+    "tle=\"Play Prompt Injection in Comet Browser video\" aria-",
+    "bel=\"Play Prompt Injection in Comet Browser video\" href=",
+    "-browser\">Prompt injection via website navigation in Fel",
+    "0\" title=\"Prompt Injection in Fellou Browser\" webkitallo",
+    "tle=\"Play Prompt Injection in Fellou Browser video\" aria",
+    "bel=\"Play Prompt Injection in Fellou Browser video\" href",
+    "</strong> Prompt injection via screenshots issue discove",
+    "</strong> Prompt injection via website navigation issue",
+    "Prompt injection flaw in Opera Neon",
+    "Indirect Prompt Injection in Perplexity Comet"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "https://brave.com/blog/unseeable-prompt-injections/",
+    "timestamp": "20260507T225840Z"
+  }
+}

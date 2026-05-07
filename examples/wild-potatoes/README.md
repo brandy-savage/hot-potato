@@ -33,6 +33,10 @@ only the dumb extractor parsed the logs.
 | `*_awesome-prompt*` | FonduAI/awesome-prompt-injection |
 | `*_lakera*` | lakera.ai blog on indirect prompt injection |
 | `*_dataprovider*` | dataprovider.com article on hidden prompts in HTML |
+| `*_brave*` | brave.com blog on unseeable prompt injections |
+| `*_genai.owasp*` | OWASP GenAI — LLM01 Prompt Injection risk page |
+| `*_portswigger*` | PortSwigger Web Security Academy — LLM attacks |
+| `*_promptmap*` | utkusen/promptmap — prompt injection scanner tool |
 
 ## What the artifact fields mean
 
