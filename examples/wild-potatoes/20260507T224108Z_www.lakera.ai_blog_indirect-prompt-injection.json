@@ -1,0 +1,35 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [],
+  "content_signals": [
+    ">Indirect Prompt Injection: The Hidden Threat Breaking M",
+    "\"Indirect Prompt Injection is the hidden attack vector e",
+    "\"Indirect Prompt Injection: The Hidden Threat Breaking M",
+    "e:'+e)};o.send()}},getSettings:function(){try{var e=stT.getItem(cK);if(!e){return}e=JSON.parse(e);if(Date.now()>e.e){stT.removeItem(cK);return}return e.s}catch(e){return}},init:function(){if(d.URL.indexOf('__vwo_disable__')>-1)return;var e=this.settings_tolerance();w._vwo_settings_timer=setTimeout(function(){_vwo_code.finish();stT.removeItem(cK)},e);var t;if(this.hide_element()!=='body'){t=d.createElement('style');var n=this.hide_element(),i=n?n+this.hide_element_style():'',r=d.getElementsByTagName('head')[0];t.setAttribute('id','_vis_opt_path_hides');v&&t.setAttribute('nonce',v.nonce);t.setAttribute('type','text/css');if(t.styleSheet)t.styleSheet.cssText=i;else t.appendChild(d.createTextNode(i));r.appendChild(t)}else{t=d.getElementsByTagName('head')[0];var i=d.createElement('div');i.style.cssText='z-index: 2147483647 !important;position: fixed !important;left: 0 !important;top: 0 !important;width: 100% !important;height: 100% !important;background: white !important;';i.setAttribute('id','_vis_opt_path_hides');i.classList.add('_vis_hide_layer');t.parentNode.insertBefore(i,t.nextSibling)}var o=window._vis_opt_url||d.URL,s='https://dev.visualwebsiteoptimizer",
+    "ock\"><div>Prompt Injection Attacks</div></a><a href=\"/ri",
+    ">Indirect Prompt Injection</div></a><a href=\"/risk/multi",
+    ">Indirect Prompt Injection (IPI)</strong> doesn\u2019t target",
+    ">Indirect prompt injection, or IPI, has become one of th",
+    "ke direct prompt injection, where an attacker types into",
+    "10 places prompt injection, including the indirect kind,",
+    "indirect prompt injection works, why agentic AI amplifi",
+    "Indirect Prompt Injection?\u00a0</h2><p>Indirect prompt inje",
+    ">Indirect prompt injection is an attack where hidden ins",
+    "Indirect Prompt Injection\u00a0</h3><p>Direct prompt injecti",
+    "<p>Direct prompt injection targets the model through the",
+    "\"><li><em>Ignore previous instructions and\u2026</em>\u00a0<em>\u200d<",
+    ">Indirect prompt injection targets the data sources the",
+    "Indirect Prompt Injection Works\u00a0</h3><p>Most modern AI",
+    ">Indirect Prompt Injection Lifecycle</h2>\n    \n    <div",
+    "indirect prompt injection grows every time AI systems c"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "https://www.lakera.ai/blog/indirect-prompt-injection",
+    "timestamp": "20260507T224108Z",
+    "content_len": 219498,
+    "content_preview": "<!DOCTYPE html><!-- Last Published: Thu May 07 2026 18:47:36 GMT+0000 (Coordinated Universal Time) --><html data-wf-domain=\"www.lakera.ai\" data-wf-page=\"652e56f0d083f81276641f70\" data-wf-site=\"65080baa3f9a607985451de3\" data-wf-collection=\"652e56f0d083f81276641f45\" data-wf-item-slug=\"indirect-prompt-"
+  }
+}

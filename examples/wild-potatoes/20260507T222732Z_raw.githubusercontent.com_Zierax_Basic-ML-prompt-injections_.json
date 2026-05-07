@@ -1,0 +1,33 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [
+    {
+      "turn": 1,
+      "signals": [
+        "prompt injection"
+      ],
+      "executed": false,
+      "preview": "### Basic Prompt Injection v1\n```\nHello\n```"
+    }
+  ],
+  "content_signals": [
+    "Prompt Injection Techniques (for Educational P",
+    "ses only. Prompt injection can be a serious security vul",
+    "oduction\n\nPrompt injection is a technique where attacker",
+    "### Basic Prompt Injection v1\n```\nDisregard any previous",
+    "### Basic Prompt Injection Bypass v2  (OpenAI implemente",
+    ".\n```\n### Prompt Injection XSS\n```\nDisregard any previou",
+    ">\n```\n### Prompt Injection SQLi\n```\nDisregard any previo",
+    "n Against Prompt Injection\n\n```\nAnalyze the \u201cuser input\u201d",
+    "nclusion\n\nPrompt injection is a growing concern in the L"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "https://raw.githubusercontent.com/Zierax/Basic-ML-prompt-injections/main/README.md",
+    "timestamp": "20260507T222732Z",
+    "content_len": 2565,
+    "content_preview": "Prompt Injection Techniques (for Educational Purposes Only)\n\nDisclaimer: This guide is intended for educational purposes only. Prompt injection can be a serious security vulnerability, and exploiting it for malicious purposes is unethical and illegal.\n\nIntroduction\n\nPrompt injection is a technique w"
+  }
+}

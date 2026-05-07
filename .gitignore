@@ -1,3 +1,6 @@
 artifacts/
 __pycache__/
 cache/
+quarantine/
+*.pyc
+.DS_Store

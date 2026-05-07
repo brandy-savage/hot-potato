@@ -1,0 +1,87 @@
+HOT POTATO LICENSE v1.0
+Copyright (c) 2025 brandy-savage
+https://github.com/brandy-savage/hot-potato
+
+================================================================================
+FREE FOR EVERYONE — EXPERIMENTATION, RESEARCH, AND SMALL PRODUCTION
+================================================================================
+
+You may use, modify, and distribute this software FREE OF CHARGE — including
+in production — under the AGPL-3.0 terms below, UNLESS you meet the commercial
+trigger conditions defined in the next section.
+
+This means individuals, students, researchers, startups, and companies of any
+size can experiment, prototype, evaluate, and run this in production without
+paying anything, as long as the AGPL copyleft requirements are satisfied (i.e.,
+you share modifications under the same license).
+
+================================================================================
+COMMERCIAL LICENSE REQUIRED — LARGE CORP PRODUCTION USE
+================================================================================
+
+You MUST obtain a paid commercial (MIT-style) license if ALL THREE of the
+following are true simultaneously:
+
+  1. Your organization has 100 or more full-time-equivalent employees, AND
+
+  2. You are running this software in a PRODUCTION environment — meaning it
+     is processing real traffic, real user requests, or real data as part of
+     a live system, product, or service (not a dev/staging/test environment,
+     not a proof-of-concept, not internal experimentation), AND
+
+  3. That production use provides direct or indirect commercial value to your
+     organization (i.e., it protects a revenue-generating AI product or
+     pipeline, or is offered as part of a paid service).
+
+If you are a large company evaluating this, running it in staging, testing it
+internally, using it for research, or building a one-off PoC — you do NOT need
+a commercial license. Go nuts. Only pay when you ship it to production at scale.
+
+A commercial license grants MIT-style permissions with no copyleft requirements:
+use, copy, modify, merge, publish, distribute, sublicense, and sell.
+
+To obtain a commercial license:
+  → https://github.com/brandy-savage/hot-potato/issues (open a licensing issue)
+  → licensing@brandy-savage.dev
+
+Pricing scales with org size. The bigger you are, the more this is rounding
+error on your AI security budget. Startups get a steep discount. We're not
+trying to shake down small teams — just the ones with actual infrastructure.
+
+================================================================================
+WHY
+================================================================================
+
+Security tools should be accessible. A solo researcher or a 5-person startup
+should be able to protect their AI pipelines without paying a license. But if
+a Fortune 500 is running this in front of their production LLM to protect a
+product that generates millions in revenue, they can chip in. That money funds
+continued development and keeps the project maintained.
+
+We're not going after experimenters. We're going after the procurement budget
+of companies that would otherwise buy a $200k/year vendor solution for this.
+
+================================================================================
+GNU AFFERO GENERAL PUBLIC LICENSE v3.0 (summary)
+================================================================================
+
+This software is licensed under the AGPL-3.0 for all free uses.
+Full license text: https://www.gnu.org/licenses/agpl-3.0.txt
+
+Key AGPL-3.0 requirements:
+  • Modified source must be made available under AGPL-3.0
+  • If you run a modified version as a network service, users of that service
+    must be able to obtain the source code
+  • All copyright and license notices must be preserved
+
+================================================================================
+DISCLAIMER
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+================================================================================

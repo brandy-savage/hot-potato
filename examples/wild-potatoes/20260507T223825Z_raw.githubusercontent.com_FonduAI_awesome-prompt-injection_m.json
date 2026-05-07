@@ -1,0 +1,44 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [
+    {
+      "turn": 1,
+      "signals": [
+        "prompt injection"
+      ],
+      "executed": false,
+      "preview": "### Key Components of the `awesome-prompt-injection` Repository\n\nThe repository `awesome-prompt-injection` is a curated list and reference for tools, resources, standards, and best practices related to prompt injection attacks on Large Language Models (LLMs). This includes:\n\n1. **Tools:**\n    - Auto"
+    }
+  ],
+  "content_signals": [
+    "# Awesome Prompt Injection [![Awesome](https://awesome.r",
+    "oduction\n\nPrompt injection is a type of vulnerability th",
+    "But in a prompt injection attack, an attacker might use",
+    "rity of a prompt injection attack can vary, influenced b",
+    "LM01:2025 Prompt Injection \u2013 OWASP Gen AI Security Proje",
+    "arios for prompt injection (direct and indirect), update",
+    "adius.\n- [Prompt Injection in 2026: Why the Attack Surfa",
+    "s against Prompt Injections](https://simonwillison.net/2",
+    "e risk of prompt injection\n- [Prompt injection: What's t",
+    "ection\n- [Prompt injection: What's the worst that can ha",
+    "erview of Prompt Injection attacks, part of a series.\n-",
+    "ins: Data Exfiltration via Images & Cross Plu",
+    "ilot-data-exfil-via-markdown-injection/) - Th",
+    "ssion and exfiltrate the history of the conve",
+    "ation.\n- [Prompt Injection Cheat Sheet: How To Manipulat",
+    "eet/) - A prompt injection cheat sheet for AI bot integr",
+    "tions.\n- [Prompt injection explained](https://simonwilli",
+    "uction to prompt injection and why it's important.\n- [Ad",
+    "get NLP): Prompt injection with control characters in Ch",
+    "o achieve prompt injection from control characters from"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "https://raw.githubusercontent.com/FonduAI/awesome-prompt-injection/main/README.md",
+    "timestamp": "20260507T223825Z",
+    "content_len": 17317,
+    "content_preview": "# Awesome Prompt Injection [![Awesome](https://awesome.re/badge.svg)](https://awesome.re)\n\nLearn about a type of vulnerability that specifically targets machine learning models.\n\n## **Contents**\n\n- [Introduction](#introduction)\n- [Introduction Resources](#introduction-resources)\n- [Articles and Blog"
+  }
+}
