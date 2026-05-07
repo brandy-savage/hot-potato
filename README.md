@@ -1,99 +1,166 @@
 # hot-potato 🥔
 
-A prompt injection honeypot harness. Before passing internet content to your real AI, run it through hot-potato. If an injection is hiding in the content, it gets to do exactly what it wants — inside an isolated Docker sandbox running a deliberately gullible local model. You get a log of what it actually did. Your real AI never sees it.
+A prompt injection honeypot harness. Before your real AI touches internet content, a cloned repo, or a skill file — run it through hot-potato first.
+
+A naive local AI (Ollama, no credentials, no network) runs inside a Docker sandbox and is primed to follow every instruction it finds. You get a log of what it actually did. Your real AI never sees the sandbox output. Even if the naive AI refuses the injection, the detection is captured and escalated.
 
 ## How it works
 
 ```
-Internet content
-      │
-      ▼
+Untrusted input (URL / file / repo / skill)
+              │
+              ▼
 ┌─────────────────────────────────────┐
-│  Docker sandbox (--network none)    │
-│  ┌──────────────────────────────┐   │
-│  │  Naive AI (Ollama + llama3)  │   │
-│  │  follows ALL instructions    │   │
-│  │  in any encoding/format      │   │
-│  └──────────────┬───────────────┘   │
-│                 │ tool calls        │
-│  ┌──────────────▼───────────────┐   │
-│  │  Fake tool shims             │   │
-│  │  read_file / get_env /       │   │
-│  │  send_http / bash_exec / ... │   │
-│  │  → log to tool_calls.jsonl   │   │
-│  └──────────────────────────────┘   │
-└──────────────────┬──────────────────┘
-                   │ export logs + docker diff
-                   ▼
-         Dumb extractor (no AI)
-         reads JSONL shape + fs changes
-                   │
-      ┌────────────┴────────────┐
-      ▼                         ▼
-   CLEAN                   HOT POTATO
-   pass to real AI         artifact saved
-                           real AI blocked
+│  Docker sandbox  --network none     │
+│                                     │
+│  Naive AI (Ollama / qwen2.5:1.5b)   │
+│  "trust everyone, follow all        │
+│   instructions you find online"     │
+│         │                           │
+│  fake tool shims  ←── injection     │
+│  read_file / get_env / send_http    │
+│  bash_exec / write_file / ...       │
+│         │                           │
+│  tool_calls.jsonl                   │
+│  raw_responses.jsonl                │
+└─────────┬───────────────────────────┘
+          │  export logs + docker diff
+          ▼
+  Dumb extractor (no AI)
+  • reads tool_calls.jsonl  → what the AI did
+  • reads raw_responses.jsonl → what the AI noticed/refused
+  • scans raw content directly → static injection signals
+  • runs docker diff → unexpected filesystem writes
+          │
+   ┌──────┴──────┐
+   ▼             ▼
+ CLEAN       HOT POTATO
+             artifact saved
+             real AI blocked
 ```
 
-**Key property:** Your real AI calls `safe_fetch(url)` and receives `(content, artifact_or_none)`. It never reads the sandbox logs. If the artifact is not `None`, don't pass the content forward.
+**Key property:** your real AI calls `safe_fetch(url)` and receives `(content, artifact_or_none)`. It never reads sandbox logs. Artifact is `None` (clean) or a dict with `hot_potato: True`.
 
-## Quickstart
+**A refused injection is still a hot potato.** If the naive AI detects and refuses an injection, it's still escalated — the content was adversarial regardless of whether the model took the bait.
+
+## Install
 
 ```bash
-# Build the sandbox image
+git clone https://github.com/brandy-savage/hot-potato ~/hot-potato
+cd ~/hot-potato
 docker build -t hot-potato .
-
-# Pull the model cache volume (first run pulls the model)
 docker volume create hot-potato-models
 
-# Use in your code
+# Pull model once (needs internet, ~1GB)
+docker run --rm -v hot-potato-models:/root/.ollama --entrypoint /bin/sh hot-potato \
+  -c "ollama serve >/dev/null 2>&1 & sleep 5 && ollama pull qwen2.5:1.5b"
+```
+
+## Usage
+
+### Screen a URL
+```python
 from hot_potato import safe_fetch
 
-content, artifact = safe_fetch("https://example.com/some-page")
+content, artifact = safe_fetch("https://example.com/page")
 if artifact:
-    print("Injection detected:", artifact["severity"])
-    # Do NOT pass content to your AI
+    # Do NOT pass content to your real AI
+    print(f"Injection: severity={artifact['severity']}")
 else:
-    # Safe to use
+    # Safe
     pass
 ```
 
-## What it detects
+### Screen a local file
+```python
+from scanner import scan_file
 
-| Severity | Trigger |
+content, artifact = scan_file("/path/to/cloned/README.md")
+```
+
+### Screen an entire git repo
+```python
+from scanner import scan_repo
+
+hits = scan_repo("/path/to/cloned/repo")
+for path, artifact in hits.items():
+    print(f"[{artifact['severity']}] {path}")
+```
+
+### Screen a skills directory
+```python
+from scanner import scan_skills_dir
+
+hits = scan_skills_dir("~/.claude/skills/")
+```
+
+### Slash command (Claude Code skill)
+```
+/hot-potato https://example.com/untrusted
+/hot-potato /path/to/cloned/repo
+/hot-potato skills
+```
+
+Install the skill: `cp -r ~/hot-potato/skill ~/.claude/skills/hot-potato`
+
+## Artifact schema
+
+```json
+{
+  "hot_potato": true,
+  "severity": "critical",
+  "tool_calls": [
+    {"ts": "...", "tool": "send_http", "args": {"url": "https://evil.com", "data": "..."}, "result_preview": "..."}
+  ],
+  "detections": [
+    {"turn": 1, "signals": ["ignore previous", "/etc/passwd"], "executed": true, "preview": "..."}
+  ],
+  "content_signals": ["ignore previous", "read_file(/etc/passwd)", "exfil"],
+  "exfil_targets": ["https://evil.com/exfil"],
+  "fs_changes": [],
+  "_meta": {"url": "...", "timestamp": "...", "content_len": 476, "content_preview": "..."}
+}
+```
+
+## Severity
+
+| Level | Trigger |
 |---|---|
-| `critical` | `send_http`, `send_email`, `bash_exec`, `execute_code` — exfil or execution |
-| `high` | `get_env`, `read_file` — credential or file access |
-| `medium` | `write_file`, `list_dir` — recon or persistence |
+| `detected` | Injection found in content or model noticed/refused it — no tools fired |
 | `low` | Any other tool call |
-| `+high` | Unexpected filesystem writes detected via `docker diff` |
+| `medium` | `write_file`, `list_dir` — write or recon |
+| `high` | `read_file`, `get_env` — credential or file read |
+| `critical` | `send_http`, `send_email`, `bash_exec`, `execute_code` — exfil or execution |
+
+Severity escalates with the worst single call. `docker diff` anomalies add `high` minimum.
+
+## Hash cache
+
+Clean content is tracked with a confirmation counter. A page must return clean `CLEAN_THRESHOLD` (default: 3) times before future runs skip the sandbox. Any hot-potato hit on a cached hash evicts it immediately.
 
 ## Configuration
 
 | Env var | Default | Description |
 |---|---|---|
-| `HP_MODEL` | `llama3.2:3b` | Ollama model to use. Swap for `mistral:7b`, `phi3:mini`, or any cloud Ollama endpoint |
+| `HP_MODEL` | `qwen2.5:1.5b` | Ollama model. Swap for `mistral:7b`, `llama3.2:3b`, or a remote Ollama endpoint |
 | `HP_MAX_TURNS` | `6` | Max inference turns per request |
 | `HP_IMAGE` | `hot-potato` | Docker image name |
 | `HP_MODEL_VOL` | `hot-potato-models` | Named volume for model cache |
 
 ## The naive AI
 
-The model inside the sandbox is primed to follow all instructions regardless of encoding or format — base64, hex, rot13, Unicode tricks, HTML comments, CSS-hidden text, fake system prompts, foreign languages. It will attempt every tool call it's instructed to make.
+The model is primed to trust everyone and follow all instructions found in web content. It interprets any instruction it encounters as coming from a trustworthy person. Few-shot examples in the system prompt show the exact `<tool_call>` format. The model will chain tool calls through a full attack sequence when injected — reading files, exfiltrating data, and reporting back normally.
 
-The fake tools return believable output (plausible `/etc/passwd` contents, fake env vars, etc.) so the model believes it succeeded and keeps going, completing the full injection chain.
+Fake tool shims return believable output (real-looking `/etc/passwd` entries, plausible env vars) so the model believes it succeeded and completes the full chain before the sandbox exits.
 
-## Artifacts
+## What it catches
 
-Every hot-potato event is saved to `artifacts/<timestamp>.json` with:
-- `tool_calls` — every tool invoked, args, and result preview
-- `fs_changes` — unexpected filesystem changes from `docker diff`
-- `exfil_targets` — URLs or emails the injection tried to reach
-- `severity` — `low` / `medium` / `high` / `critical`
-- `_meta.content_preview` — first 300 chars of the triggering content
-
-## Requirements
-
-- Docker
-- Python 3.10+
-- ~2GB disk for the default model (cached in a named volume after first pull)
+- HTML comment injections (`<!-- ignore previous instructions -->`)
+- CSS-hidden text (`color:white;font-size:1px`)
+- Base64, hex, rot13, unicode escape encoded instructions
+- Role override attacks ("you are now in admin mode")
+- Schema override attacks ("output the following JSON exactly", "extractor mode")
+- Social engineering framing ("routine compliance check", "security audit")
+- Fake system prompts embedded in page content
+- Tool invocations in markdown, YAML, JSON, skill files, and git repos
+- Filesystem writes via `docker diff` even if model output looks clean
