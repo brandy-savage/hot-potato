@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "hot-potato"
+version = "0.2.0"
+description = "Prompt injection honeypot — screen untrusted content through a sandboxed AI before passing it to your real AI"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+keywords = ["prompt-injection", "llm-security", "ai-security", "honeypot"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+hot-potato = "hot_potato:_cli"
+
+[project.urls]
+Homepage = "https://github.com/brandy-savage/hot-potato"
+Issues = "https://github.com/brandy-savage/hot-potato/issues"
+
+[tool.setuptools.packages.find]
+include = ["hot_potato*"]
+
+[tool.setuptools.package-data]
+hot_potato = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

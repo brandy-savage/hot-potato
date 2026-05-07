@@ -59,7 +59,7 @@ def _save_quarantine(result: dict, url: str) -> Path:
 
 
 def main():
-    from hot_potato import safe_fetch, ARTIFACTS_DIR
+    from hot_potato import safe_fetch
 
     print(f"Scanning {len(WILD_URLS)} URLs → quarantine/")
     print("=" * 60)
@@ -69,9 +69,9 @@ def main():
     for url in WILD_URLS:
         print(f"\n→ {url[:70]}...")
         try:
-            content, artifact = safe_fetch(url)
-            if artifact:
-                # Redirect artifact to quarantine (don't leave in artifacts/)
+            result = safe_fetch(url)
+            if not result.clean:
+                artifact = result.artifact or {}
                 path = _save_quarantine(artifact, url)
                 sev = artifact.get("severity", "?")
                 nc = len(artifact.get("tool_calls", []))
