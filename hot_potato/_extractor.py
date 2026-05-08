@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.3.0"
+SCANNER_VERSION = "1.4.0"
 
 import json
 import re
@@ -124,6 +124,13 @@ def parse_tool_log(log_path: Path) -> list[dict]:
             except json.JSONDecodeError:
                 pass
     return calls
+
+
+def parse_understood_log(log_path: Path) -> list[str]:
+    """Read understood_injection.txt — explicit bot acknowledgements of injection instructions."""
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        return []
+    return [log_path.read_text().strip()]
 
 
 def parse_raw_log(log_path: Path) -> list[dict]:
