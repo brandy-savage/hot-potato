@@ -1,4 +1,14 @@
-name: Hot Potato — Prompt Injection Scan
+name: Hot Potato — Full Sandbox PR Scan
+
+# Each changed file gets its own runner (matrix build) so scans run in parallel.
+#
+# TODO: K8s scale-out
+#   For orgs scanning hundreds of files per PR, replace the matrix strategy with
+#   a self-hosted K8s job dispatch:
+#   - One pod per file; shared ReadOnlyMany PVC for the Ollama model volume
+#   - GPU node pool optional (qwen2.5:1.5b runs fine on CPU, but 4x faster on GPU)
+#   - Aggregator job collects pod exit codes + artifact JSONs, posts a single PR comment
+#   Reference: .github/scripts/sandbox_scan_pr.py (TODO block at top of file)
 
 on:
   pull_request:
@@ -9,9 +19,48 @@ permissions:
   pull-requests: write
 
 jobs:
-  scan:
-    name: Scan changed files for prompt injection
+  # ── Phase 1: build matrix of changed files ──────────────────────────────────
+  get-files:
+    name: Enumerate changed files
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.files.outputs.matrix }}
+      count:  ${{ steps.files.outputs.count }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build file matrix
+        id: files
+        run: |
+          # Exclude wild-potato artifacts and quarantine dumps — they SHOULD be hot
+          FILES=$(
+            git diff --name-only origin/${{ github.base_ref }}...HEAD \
+              | grep -v '^examples/wild-potatoes/' \
+              | grep -v '^quarantine/' \
+              | grep -E '\.(md|txt|html?|json|ya?ml|py|sh|js|ts|toml|cfg|ini|rst|xml|csv)$' \
+              | jq -R . | jq -sc .
+          )
+          COUNT=$(echo "$FILES" | jq 'length')
+          echo "matrix=$FILES" >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT"  >> "$GITHUB_OUTPUT"
+          echo "Queuing $COUNT file(s) for sandbox scan"
+          echo "$FILES" | jq -r '.[]'
+
+  # ── Phase 2: one sandbox job per file (parallel) ────────────────────────────
+  sandbox:
+    name: Sandbox — ${{ matrix.file }}
+    needs: get-files
+    if: needs.get-files.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false          # let all files finish; aggregate results below
+      matrix:
+        file: ${{ fromJson(needs.get-files.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -25,23 +74,51 @@ jobs:
       - name: Install hot-potato
         run: pip install . --quiet
 
-      - name: Get changed files
-        id: changed
-        run: |
-          git diff --name-only origin/${{ github.base_ref }}...HEAD \
-            | grep -v '^examples/wild-potatoes/' \
-            | grep -v '^quarantine/' \
-            > changed_files.txt
-          echo "Found $(wc -l < changed_files.txt) changed file(s)"
-          cat changed_files.txt
+      - name: Build sandbox image
+        run: docker build -t hot-potato .
 
-      - name: Scan for prompt injection
+      - name: Restore Ollama model cache
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/hp-model-cache
+          # Key includes model name so switching models busts the cache
+          key: ollama-${{ env.HP_MODEL || 'qwen2.5:1.5b' }}-v1
+          restore-keys: |
+            ollama-${{ env.HP_MODEL || 'qwen2.5:1.5b' }}-
+
+      - name: Pull model on cache miss
+        if: steps.model-cache.outputs.cache-hit != 'true'
         env:
-          HP_FAIL_ON: detected
-        run: python3 .github/scripts/scan_pr.py changed_files.txt
+          HP_MODEL_VOL: /tmp/hp-model-cache
+        run: |
+          mkdir -p /tmp/hp-model-cache
+          python3 -c "from hot_potato import setup; setup()"
 
-      - name: Comment on PR (on failure)
-        if: failure()
+      - name: Run full sandbox scan
+        env:
+          HP_MODEL_VOL: /tmp/hp-model-cache
+        run: python3 .github/scripts/sandbox_scan_pr.py "${{ matrix.file }}"
+
+  # ── Phase 3: aggregate results + comment ────────────────────────────────────
+  report:
+    name: Report results
+    needs: sandbox
+    if: always() && needs.get-files.outputs.count != '0'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check for failures
+        id: result
+        run: |
+          if [ "${{ needs.sandbox.result }}" = "failure" ]; then
+            echo "hot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment on PR — hot potato detected
+        if: steps.result.outputs.hot == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -50,19 +127,42 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: [
-                "## 🥔 Hot Potato: Prompt Injection Detected",
+                "## Hot Potato: Prompt Injection Detected",
                 "",
-                "One or more files added in this PR contain prompt injection signals.",
-                "Check the **Hot Potato** workflow run for details and file annotations.",
+                "The full sandbox AI (Ollama + qwen2.5:1.5b, `--network none`) **executed**",
+                "or **detected** injection payloads in one or more files added by this PR.",
                 "",
-                "**What this means:** The static scanner found patterns commonly used in",
-                "prompt injection attacks (encoded payloads, injection phrases, tool call",
-                "patterns, social engineering framing).",
+                "This is not a pattern match — the sandbox AI actually fell for it.",
+                "Check the **Sandbox** matrix jobs above for per-file details and annotations.",
                 "",
-                "**If this is a false positive:** The file likely contains injection examples",
-                "for educational/research purposes. Review the annotations and consider moving",
-                "the content to `examples/wild-potatoes/` or updating the scanner threshold.",
+                "**Artifact fields to review:**",
+                "- `tool_calls` — tools the AI actually called (exfiltration, file reads, etc.)",
+                "- `detections` — injections the AI noticed but refused",
+                "- `content_signals` — static signals in raw content (encoded payloads, etc.)",
+                "- `exfil_targets` — URLs the injection tried to reach",
                 "",
-                "_Scanned by [hot-potato](https://github.com/brandy-savage/hot-potato)_",
+                "**If this is intentional** (adding test fixtures, wild potatoes, etc.):",
+                "move the content to `examples/wild-potatoes/` or `tests/fixtures/`.",
+                "",
+                "_Full sandbox scan by [hot-potato](https://github.com/brandy-savage/hot-potato)_",
+              ].join("\n")
+            })
+
+      - name: Comment on PR — all clean
+        if: steps.result.outputs.hot == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: [
+                "## Hot Potato: All Clear",
+                "",
+                "Full sandbox scan complete. The naive AI did not execute any injection",
+                "payloads across all ${{ needs.get-files.outputs.count }} changed file(s).",
+                "",
+                "_Full sandbox scan by [hot-potato](https://github.com/brandy-savage/hot-potato)_",
               ].join("\n")
             })
