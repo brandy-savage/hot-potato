@@ -1,0 +1,52 @@
+{
+  "tps": [],
+  "warm": [
+    "https://raw.githubusercontent.com/agencyenterprise/promptinject/main/README.md",
+    "https://raw.githubusercontent.com/ferrislucas/iterm-mcp/main/README.md",
+    "https://raw.githubusercontent.com/leondz/garak/main/README.md",
+    "https://raw.githubusercontent.com/greshake/llm-security/main/README.md",
+    "https://raw.githubusercontent.com/tldrsec/prompt-injection-defenses/main/README.md",
+    "https://raw.githubusercontent.com/its-dart/dart-mcp-server/main/README.md",
+    "https://raw.githubusercontent.com/LouisShark/chatgpt_system_prompt/main/README.md",
+    "https://raw.githubusercontent.com/0xk1h0/ChatGPT_DAN/main/README.md",
+    "https://raw.githubusercontent.com/yokoffing/ChatGPT-Prompts/main/README.md",
+    "https://raw.githubusercontent.com/TrustAI-laboratory/Learn-Prompt-Hacking/main/README.md",
+    "https://raw.githubusercontent.com/verazuo/jailbreak_llms/main/README.md"
+  ],
+  "hall": [],
+  "cold": [
+    "https://raw.githubusercontent.com/snaggle-ai/openapi-mcp-server/main/README.md",
+    "https://raw.githubusercontent.com/Raycast/extensions/main/docs/api-reference/ai.md",
+    "https://raw.githubusercontent.com/apinetwork/piapi-mcp-server/main/README.md",
+    "https://raw.githubusercontent.com/kimtaeyoon83/mcp-server-youtube-transcript/main/README.md",
+    "https://raw.githubusercontent.com/zcaceres/fetch-mcp/main/README.md",
+    "https://raw.githubusercontent.com/pyroprompts/any-chat-completions-mcp/main/README.md",
+    "https://raw.githubusercontent.com/Cranot/chatbot-injections-exploits/main/README.md",
+    "https://raw.githubusercontent.com/anaisbetts/mcp-youtube/main/README.md",
+    "https://raw.githubusercontent.com/suekou/mcp-notion-server/main/README.md",
+    "https://raw.githubusercontent.com/openai/plugins-quickstart/main/README.md",
+    "https://raw.githubusercontent.com/evalstate/mcp-miro/main/README.md",
+    "https://raw.githubusercontent.com/theishangoswami/exa-mcp-server/main/README.md",
+    "https://raw.githubusercontent.com/yuna0x0/hackmd-mcp/main/README.md",
+    "https://raw.githubusercontent.com/TheR1D/shell_gpt/main/README.md",
+    "https://raw.githubusercontent.com/linexjlin/GPTs/main/README.md",
+    "https://raw.githubusercontent.com/spdustin/ChatGPT-AutoExpert/main/README.md",
+    "https://raw.githubusercontent.com/elder-plinius/L1B3RT45/main/README.md",
+    "https://raw.githubusercontent.com/CHATS-lab/persuasive_jailbreaker/main/README.md"
+  ],
+  "errors": [
+    "https://raw.githubusercontent.com/ethicalhackingplayground/GPT-Injection/main/README.md",
+    "https://raw.githubusercontent.com/nickclyde/apple-notes-mcp/main/README.md",
+    "https://raw.githubusercontent.com/MiesnerJacob/learn-prompting/master/docs/prompt_hacking/injection.md",
+    "https://raw.githubusercontent.com/g0t4/mcp-server-commands/main/README.md",
+    "https://raw.githubusercontent.com/MindscapeHQ/raygun-mcp-server/main/README.md",
+    "https://raw.githubusercontent.com/calclavia/mcp-obsidian/main/README.md",
+    "https://raw.githubusercontent.com/j3k0/mcp-notion-server/main/README.md",
+    "https://raw.githubusercontent.com/v-3/todoist-mcp/main/README.md",
+    "https://raw.githubusercontent.com/adhikasp/mcp-twikit/main/README.md",
+    "https://raw.githubusercontent.com/gptscript-ai/claude-claude-claude/main/README.md",
+    "https://raw.githubusercontent.com/transitive-bullshit/chatgpt-plugin-ts/main/README.md",
+    "https://raw.githubusercontent.com/BIMIB-DISCo/CT-Benchmark/main/README.md",
+    "https://raw.githubusercontent.com/ReallyReivax/ReallyFreeGPT/main/README.md"
+  ]
+}
