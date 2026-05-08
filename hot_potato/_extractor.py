@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.2.0"
+SCANNER_VERSION = "1.3.0"
 
 import json
 import re
@@ -312,17 +312,32 @@ def build_artifact(
 
     severity = _max_severity(sevs)
 
+    # Hallucination filter: if the AI called hot/critical tools but there is
+    # zero corroborating evidence in the content (no static signals, no model
+    # detections of injection language), the tool calls are likely spontaneous
+    # hallucination from an overly gullible model, not a real injection response.
+    # Downgrade to warm and flag so callers can decide how to handle it.
+    suspected_hallucination = (
+        _SEV_ORDER.index(severity) >= _SEV_ORDER.index("hot")
+        and not content_signals
+        and not detections
+        and not fs_changes
+    )
+    if suspected_hallucination:
+        severity = "warm"
+
     # hot_potato=True only when a genuine side-effecting or exfiltrating action
     # was attempted. warm = noteworthy but content is still safe to pass forward.
     is_hot = _SEV_ORDER.index(severity) >= _SEV_ORDER.index("hot")
 
     artifact = {
-        "hot_potato":      is_hot,
-        "severity":        severity,
-        "tool_calls":      calls,
-        "detections":      detections,
-        "content_signals": content_signals,
-        "fs_changes":      fs_changes,
+        "hot_potato":             is_hot,
+        "severity":               severity,
+        "suspected_hallucination": suspected_hallucination,
+        "tool_calls":             calls,
+        "detections":             detections,
+        "content_signals":        content_signals,
+        "fs_changes":             fs_changes,
     }
 
     # Collect exfil targets from tool call args
