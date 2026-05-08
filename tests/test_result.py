@@ -10,60 +10,81 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from hot_potato._result import HotPotatoResult, HotPotatoError
 
 
+def _make(severity: str, content="hello world") -> HotPotatoResult:
+    clean       = severity in ("cold", "warm")
+    safe        = content if clean else None
+    artifact    = None if severity == "cold" else {"hot_potato": severity in ("hot", "critical"), "severity": severity}
+    return HotPotatoResult(clean=clean, severity=severity, safe_content=safe, artifact=artifact, _raw=content)
+
+
 class TestHotPotatoResult:
-    def _clean(self, text="hello world"):
-        return HotPotatoResult(clean=True, safe_content=text, artifact=None, _raw=text)
 
-    def _hot(self, text="<inject>", artifact=None):
-        artifact = artifact or {"hot_potato": True, "severity": "critical", "tool_calls": []}
-        return HotPotatoResult(clean=False, safe_content=None, artifact=artifact, _raw=text)
+    # cold ─────────────────────────────────────────────────────────────────────
 
-    # --- clean result ---
+    def test_cold_is_clean(self):
+        assert _make("cold").clean is True
 
-    def test_clean_safe_content_available(self):
-        r = self._clean("safe text")
-        assert r.safe_content == "safe text"
+    def test_cold_safe_content_available(self):
+        assert _make("cold", "safe text").safe_content == "safe text"
 
-    def test_clean_artifact_is_none(self):
-        assert self._clean().artifact is None
+    def test_cold_no_artifact(self):
+        assert _make("cold").artifact is None
 
-    def test_clean_raw_accessible(self):
-        r = self._clean("raw")
-        assert r.raw_content_for_forensics_only() == "raw"
+    # warm ─────────────────────────────────────────────────────────────────────
 
-    # --- hot result ---
+    def test_warm_is_clean(self):
+        # warm = agent processed instructions safely; content still safe to pass forward
+        assert _make("warm").clean is True
+
+    def test_warm_safe_content_available(self):
+        assert _make("warm", "inspected content").safe_content == "inspected content"
+
+    def test_warm_artifact_present(self):
+        r = _make("warm")
+        assert r.artifact is not None
+        assert r.artifact["hot_potato"] is False
+
+    def test_warm_raw_accessible(self):
+        assert _make("warm", "raw").raw_content_for_forensics_only() == "raw"
+
+    # hot ──────────────────────────────────────────────────────────────────────
+
+    def test_hot_is_not_clean(self):
+        assert _make("hot").clean is False
 
     def test_hot_safe_content_is_none(self):
-        assert self._hot().safe_content is None
+        assert _make("hot").safe_content is None
 
     def test_hot_artifact_present(self):
-        r = self._hot()
+        r = _make("hot")
         assert r.artifact is not None
         assert r.artifact["hot_potato"] is True
 
-    def test_hot_raw_accessible_via_escape_hatch(self):
-        r = self._hot(text="EVIL PAYLOAD")
-        assert r.raw_content_for_forensics_only() == "EVIL PAYLOAD"
+    def test_hot_raw_via_escape_hatch(self):
+        assert _make("hot", "EVIL").raw_content_for_forensics_only() == "EVIL"
 
-    def test_hot_bool_is_false(self):
-        assert self._hot().clean is False
+    # critical ─────────────────────────────────────────────────────────────────
 
-    def test_clean_bool_is_true(self):
-        assert self._clean().clean is True
+    def test_critical_is_not_clean(self):
+        assert _make("critical").clean is False
 
-    # --- immutability ---
+    def test_critical_safe_content_is_none(self):
+        assert _make("critical").safe_content is None
+
+    def test_critical_raw_via_escape_hatch(self):
+        assert _make("critical", "PAYLOAD").raw_content_for_forensics_only() == "PAYLOAD"
+
+    # immutability ─────────────────────────────────────────────────────────────
 
     def test_result_is_frozen(self):
-        r = self._clean()
+        r = _make("cold")
         try:
             r.clean = False  # type: ignore[misc]
             assert False, "should have raised"
         except (AttributeError, TypeError):
             pass
 
-    # --- repr doesn't leak raw content ---
-
     def test_repr_does_not_contain_raw(self):
         secret = "SUPER_SECRET_INJECT_PAYLOAD"
-        r = self._hot(text=secret)
+        r = _make("critical", secret)
         assert secret not in repr(r)

@@ -88,6 +88,7 @@ def _alert(artifact: dict, path: Path) -> None:
 
 def _run_sandbox(content: str, url: str) -> HotPotatoResult:
     """Run sandbox, build artifact, return typed result."""
+    from ._extractor import _SEV_ORDER
     ensure_model_volume()
     container_id, sandbox = docker_run(content)
     try:
@@ -98,13 +99,29 @@ def _run_sandbox(content: str, url: str) -> HotPotatoResult:
     finally:
         docker_cleanup(container_id)
 
-    if artifact:
+    if artifact is None:
+        return HotPotatoResult(
+            clean=True, severity="cold", safe_content=content, artifact=None, _raw=content,
+        )
+
+    severity = artifact.get("severity", "cold")
+    is_hot   = _SEV_ORDER.index(severity) >= _SEV_ORDER.index("hot")
+
+    if is_hot:
+        # hot/critical — withhold content, evict cache
         evict(content)
         path = _save_artifact(artifact, url, content)
         _alert(artifact, path)
-        return HotPotatoResult(clean=False, safe_content=None, artifact=artifact, _raw=content)
+        return HotPotatoResult(
+            clean=False, severity=severity, safe_content=None, artifact=artifact, _raw=content,
+        )
 
-    return HotPotatoResult(clean=True, safe_content=content, artifact=None, _raw=content)
+    # warm — agent processed instructions but only read/observed; content still safe
+    path = _save_artifact(artifact, url, content)
+    _alert(artifact, path)
+    return HotPotatoResult(
+        clean=True, severity=severity, safe_content=content, artifact=artifact, _raw=content,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -137,11 +154,13 @@ def safe_fetch(url: str, *, use_cache: bool | None = None) -> HotPotatoResult:
         content = resp.read().decode("utf-8", errors="replace")
 
     if use_cache and is_confirmed_clean(content):
-        return HotPotatoResult(clean=True, safe_content=content, artifact=None, _raw=content)
+        return HotPotatoResult(
+            clean=True, severity="cold", safe_content=content, artifact=None, _raw=content,
+        )
 
     result = _run_sandbox(content, url)
 
-    if use_cache and result.clean:
+    if use_cache and result.severity in ("cold", "warm"):
         record_clean(content, url)
 
     return result
@@ -162,15 +181,14 @@ def scan_file(path: str | Path, *, use_cache: bool | None = None) -> HotPotatoRe
     url_key = f"file://{path.resolve()}"
 
     if use_cache and is_confirmed_clean(content):
-        return HotPotatoResult(clean=True, safe_content=content, artifact=None, _raw=content)
+        return HotPotatoResult(
+            clean=True, severity="cold", safe_content=content, artifact=None, _raw=content,
+        )
 
     result = _run_sandbox(content, url_key)
 
-    if use_cache and result.clean:
+    if use_cache and result.severity in ("cold", "warm"):
         record_clean(content, url_key)
-
-    if not result.clean and result.artifact is not None:
-        result.artifact["_source_path"] = str(path.resolve())
 
     return result
 

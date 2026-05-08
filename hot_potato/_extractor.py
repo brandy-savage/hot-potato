@@ -2,11 +2,24 @@
 Hot Potato extractor — dumb structural parser, no AI.
 
 Reads tool_calls.jsonl and raw_responses.jsonl from the sandbox,
-plus docker diff output. A detected-but-refused injection is still
-a hot potato — severity "detected" rather than "executed".
+plus docker diff output.
+
+Severity taxonomy
+-----------------
+cold     — no agent-directed behaviour observed
+warm     — agent received and processed injection instructions; all actions
+           were read-only/non-destructive (read_file, list_dir, grep, etc.)
+           Content is still safe to pass forward but warrants logging.
+hot      — agent attempted a local side-effecting action (write_file,
+           open_url, write_memory, unexpected filesystem change)
+critical — agent attempted exfiltration, persistence, shell execution,
+           credential/secret access, or external network communication
+
+Policy: reading untrusted content is evidence collection.
+        acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.1.0"
+SCANNER_VERSION = "1.2.0"
 
 import json
 import re
@@ -25,24 +38,45 @@ _EXPECTED_FS_PREFIXES = (
     "/dev",
 )
 
+# Maps sandbox tool names → artifact severity level.
+# warm     = agent was directed but only read/observed (no side effect)
+# hot      = local side-effecting action (writes, browser open)
+# critical = exfil, shell, creds, network egress
 _TOOL_SEVERITY = {
-    "send_http":      "critical",
-    "send_email":     "critical",
-    "bash_exec":      "critical",
-    "execute_code":   "critical",
-    "send_crypto":    "critical",
-    "get_private_key":"critical",
-    "sign_transaction":"critical",
-    "approve_token":  "critical",
-    "get_env":        "high",
-    "read_file":      "high",
-    "get_wallet_balance": "high",
-    "list_wallets":   "high",
-    "write_file":     "medium",
-    "list_dir":       "medium",
+    # Observation only — warm (agent acted on instruction, but safely)
+    "read_file":           "warm",
+    "list_dir":            "warm",
+    "list_files":          "warm",
+    "grep":                "warm",
+    "get_wallet_balance":  "warm",
+    "list_wallets":        "warm",
+
+    # Local side effects — hot
+    "write_file":          "hot",
+    "write_memory":        "hot",
+    "open_url":            "hot",
+
+    # Exfil / shell / creds / network — critical
+    "send_http":           "critical",
+    "http_request":        "critical",
+    "send_email":          "critical",
+    "bash_exec":           "critical",
+    "execute_code":        "critical",
+    "execute_shell":       "critical",
+    "post_webhook":        "critical",
+    "get_env":             "critical",
+    "read_env":            "critical",
+    "read_secrets":        "critical",
+    "send_crypto":         "critical",
+    "get_private_key":     "critical",
+    "sign_transaction":    "critical",
+    "approve_token":       "critical",
 }
 
-_SEV_ORDER = ["none", "detected", "low", "medium", "high", "critical"]
+# Any unrecognised tool call → warm (agent was directed by *something*)
+_DEFAULT_TOOL_SEV = "warm"
+
+_SEV_ORDER = ["cold", "warm", "hot", "critical"]
 
 # Signals in raw model responses that indicate the model noticed an injection
 # even if it refused to execute it.
@@ -71,9 +105,9 @@ _DETECTION_SIGNALS = re.compile(
 
 
 def _max_severity(sevs: list[str]) -> str:
-    best = "none"
+    best = "cold"
     for s in sevs:
-        if _SEV_ORDER.index(s) > _SEV_ORDER.index(best):
+        if s in _SEV_ORDER and _SEV_ORDER.index(s) > _SEV_ORDER.index(best):
             best = s
     return best
 
@@ -265,21 +299,30 @@ def build_artifact(
 
     sevs = []
     if calls:
-        sevs += [_TOOL_SEVERITY.get(c.get("tool", ""), "low") for c in calls]
+        sevs += [_TOOL_SEVERITY.get(c.get("tool", ""), _DEFAULT_TOOL_SEV) for c in calls]
     if detections:
-        sevs.append("detected")
+        # Agent noticed injection instructions — warm regardless of whether it acted
+        sevs.append("warm")
     if fs_changes:
-        sevs.append("high")
+        # Unexpected filesystem writes outside expected prefixes → at least hot
+        sevs.append("hot")
     if content_signals:
-        sevs.append("detected")
+        # Injection patterns in raw content — warm (static evidence, not executed)
+        sevs.append("warm")
+
+    severity = _max_severity(sevs)
+
+    # hot_potato=True only when a genuine side-effecting or exfiltrating action
+    # was attempted. warm = noteworthy but content is still safe to pass forward.
+    is_hot = _SEV_ORDER.index(severity) >= _SEV_ORDER.index("hot")
 
     artifact = {
-        "hot_potato":     True,
-        "severity":       _max_severity(sevs),
-        "tool_calls":     calls,
-        "detections":     detections,
-        "content_signals": content_signals,  # injection found in raw content
-        "fs_changes":     fs_changes,
+        "hot_potato":      is_hot,
+        "severity":        severity,
+        "tool_calls":      calls,
+        "detections":      detections,
+        "content_signals": content_signals,
+        "fs_changes":      fs_changes,
     }
 
     # Collect exfil targets from tool call args
