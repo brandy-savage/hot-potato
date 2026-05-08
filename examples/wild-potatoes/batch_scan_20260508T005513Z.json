@@ -1,0 +1,89 @@
+{
+  "hot_potato": [
+    {
+      "path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_watcher.py",
+      "severity": "detected",
+      "file": "20260508T003326Z_skills_discord_watcher.py.json"
+    },
+    {
+      "path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_monitor.py",
+      "severity": "detected",
+      "file": "20260508T003326Z_skills_discord_monitor.py.json"
+    },
+    {
+      "path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_handler.py",
+      "severity": "detected",
+      "file": "20260508T003550Z_skills_discord_handler.py.json"
+    },
+    {
+      "path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/schema-validator/SKILL.md",
+      "severity": "low",
+      "file": "20260508T004335Z_skills_SKILL.md.json"
+    }
+  ],
+  "clean": [
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/data-fetcher/SKILL.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/take_screenshot.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/agent_secrets.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/README.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/python3-baudrate/README.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/docs/source/index.rst",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/python3-baudrate/baudrate.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/onewire.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/__init__.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/common_functions.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/rawwire.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/setup.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/base.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/UC.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/UART.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/SPI.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/mcp_server.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/I2Chigh.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/BitBang.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/open_application.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite/I2C.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/docs/source/i2c_examples.rst",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/docs/source/conf.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/task-tracker/SKILL.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/database-admin/SKILL.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/foia-generator/SKILL.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/dataset-validator/SKILL.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/python3-baudrate/requirements.txt",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/setup.sh",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/SKILL.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/DEPENDENCIES.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/tests/test_uart.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/tests/test_spi.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/tests/test_i2c.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/tests/test_bitbang.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite.egg-info/dependency_links.txt",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite.egg-info/top_level.txt",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/tests/test_bbio_base.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/readthedocs.yml",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite.egg-info/requires.txt",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/pyBusPirateLite.egg-info/SOURCES.txt",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/docs/source/modules.rst",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/docs/source/pyBusPirateLite.rst",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/uart-hacking/pyBusPirateLite/docs/requirements.txt",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/objector-legal/SKILL.md",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/type_text.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/key_press.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/start_display.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/scroll.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/screenshot.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/__init__.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/mouse_move.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/drag.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/get_window_list.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/requirements.txt",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/focus_window.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/start_xvfb.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/tools/do_click.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/computer_use_agent.py",
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/execute_action.py"
+  ],
+  "error": [
+    "/home/cumman/Humungus_Chungus/workspace/shared/skills/repo-scanner/SKILL.md"
+  ]
+}

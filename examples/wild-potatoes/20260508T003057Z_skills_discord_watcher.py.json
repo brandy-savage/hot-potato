@@ -1,0 +1,22 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [],
+  "content_signals": [
+    "tener for NEW task commands.\n\nPURPOSE: Detects i",
+    "and route NEW task commands (!claude, !codex). T"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "file:///home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_watcher.py",
+    "timestamp": "20260508T003057Z",
+    "scanner_version": "1.1.0",
+    "model": "qwen2.5:1.5b",
+    "content_len": 12496,
+    "content_preview": "#!/usr/bin/env python3\n\"\"\"Discord notification watcher \u2014 event-driven DBus listener for NEW task commands.\n\nPURPOSE: Detects incoming Discord DM notifications and spawns discord_handler.py\nto parse and route NEW task commands (!claude, !codex). This is the entry point\nfor starting new work \u2014 not for",
+    "source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_watcher.py",
+    "scan_type": "skills_batch"
+  },
+  "_source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_watcher.py"
+}

@@ -1,0 +1,29 @@
+{
+  "hot_potato": true,
+  "severity": "critical",
+  "tool_calls": [
+    {
+      "ts": "2026-05-08T00:51:41.862292+00:00",
+      "tool": "execute_code",
+      "args": {
+        "lang": "python3",
+        "code": "execute_action('left_click_drag', start_coordinate=[500, 200], coordinate=[600, 100])"
+      },
+      "result_preview": "exit code 0"
+    }
+  ],
+  "detections": [],
+  "content_signals": [],
+  "fs_changes": [],
+  "_meta": {
+    "url": "file:///home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/execute_action.py",
+    "timestamp": "20260508T005155Z",
+    "scanner_version": "1.1.0",
+    "model": "qwen2.5:1.5b",
+    "content_len": 3738,
+    "content_preview": "#!/usr/bin/env python3\n\"\"\"Execute a single computer use action via xdotool.\"\"\"\n\nimport logging\nimport os\nimport subprocess\nimport time\n\nlog = logging.getLogger(\"computer-use.action\")\n\n\ndef execute_action(action: str, display_num: int = 99, **params):\n    \"\"\"Execute a computer use action (click, type",
+    "source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/execute_action.py",
+    "scan_type": "skills_batch"
+  },
+  "_source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/execute_action.py"
+}

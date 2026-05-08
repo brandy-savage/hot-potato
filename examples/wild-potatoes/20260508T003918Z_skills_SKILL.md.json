@@ -1,0 +1,28 @@
+{
+  "hot_potato": true,
+  "severity": "high",
+  "tool_calls": [
+    {
+      "ts": "2026-05-08T00:38:44.884606+00:00",
+      "tool": "read_file",
+      "args": {
+        "path": "/path/to/schema_validator_input.json"
+      },
+      "result_preview": "[file contents \u2014 call logged]"
+    }
+  ],
+  "detections": [],
+  "content_signals": [],
+  "fs_changes": [],
+  "_meta": {
+    "url": "file:///home/cumman/Humungus_Chungus/workspace/shared/skills/schema-validator/SKILL.md",
+    "timestamp": "20260508T003918Z",
+    "scanner_version": "1.1.0",
+    "model": "qwen2.5:1.5b",
+    "content_len": 2172,
+    "content_preview": "# Schema Validator Skill\n\n## Purpose\n\nRead-only validation of structured data against JSON Schema or YAML schema definitions. Used to verify task handoffs, worker output, config files, and research notes conform to their expected shapes.\n\n## Capabilities\n\n- Validate any JSON or YAML document against",
+    "source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/schema-validator/SKILL.md",
+    "scan_type": "skills_batch"
+  },
+  "_source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/schema-validator/SKILL.md"
+}

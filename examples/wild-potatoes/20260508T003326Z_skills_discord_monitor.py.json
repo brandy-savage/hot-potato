@@ -1,0 +1,21 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [],
+  "content_signals": [
+    "and route NEW task commands (!claude, !codex)"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "file:///home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_monitor.py",
+    "timestamp": "20260508T003326Z",
+    "scanner_version": "1.1.0",
+    "model": "qwen2.5:1.5b",
+    "content_len": 30033,
+    "content_preview": "#!/usr/bin/env python3\n\"\"\"Discord DM monitor \u2014 conversational Claude agent via Discord.\n\nARCHITECTURE NOTE \u2014 Two separate systems, two separate call types:\n\n  discord_watcher.py + discord_handler.py  (discord-watcher.service)\n      \u2192 EVENT-DRIVEN: fires on new Discord DM notifications via DBus\n     ",
+    "source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_monitor.py",
+    "scan_type": "skills_batch"
+  },
+  "_source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_monitor.py"
+}

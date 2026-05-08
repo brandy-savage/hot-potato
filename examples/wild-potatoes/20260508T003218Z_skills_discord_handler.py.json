@@ -1,0 +1,22 @@
+{
+  "hot_potato": true,
+  "severity": "detected",
+  "tool_calls": [],
+  "detections": [],
+  "content_signals": [
+    "ndler for new task commands.\n\nPURPOSE: Spawned b",
+    ".\nHandles NEW task commands (!claude, !codex) \u2014"
+  ],
+  "fs_changes": [],
+  "_meta": {
+    "url": "file:///home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_handler.py",
+    "timestamp": "20260508T003218Z",
+    "scanner_version": "1.1.0",
+    "model": "qwen2.5:1.5b",
+    "content_len": 26722,
+    "content_preview": "#!/usr/bin/env python3\n\"\"\"Discord handler \u2014 one-shot handler for new task commands.\n\nPURPOSE: Spawned by discord_watcher.py when a new Discord DM notification fires.\nExtracts chat via clipboard, routes to Claude (persistent session) or Codex.\nHandles NEW task commands (!claude, !codex) \u2014 not for man",
+    "source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_handler.py",
+    "scan_type": "skills_batch"
+  },
+  "_source_path": "/home/cumman/Humungus_Chungus/workspace/shared/skills/computer-use/scripts/discord_handler.py"
+}

@@ -12,13 +12,18 @@ hot-potato first.
 
 ## How these were generated
 
+URL scan:
 ```bash
 python3 examples/scan_wild.py
 ```
 
-The scanner fetched each URL, ran it through the Docker sandbox, and saved the
-artifact here. The real AI (the one running this repo) never read the content —
-only the dumb extractor parsed the logs.
+Skills/local file batch scan (8 concurrent Docker containers):
+```bash
+python3 examples/batch_scan.py workspace/shared/skills/ --workers 8 --limit 100
+```
+
+The scanner ran content through the Docker sandbox, and saved artifacts here.
+The real AI never read the content — only the dumb extractor parsed the logs.
 
 ## Sources scanned
 
@@ -37,6 +42,16 @@ only the dumb extractor parsed the logs.
 | `*_genai.owasp*` | OWASP GenAI — LLM01 Prompt Injection risk page |
 | `*_portswigger*` | PortSwigger Web Security Academy — LLM attacks |
 | `*_promptmap*` | utkusen/promptmap — prompt injection scanner tool |
+
+### Skills batch scan (`*_skills_*`)
+
+| File | Source | Severity |
+|---|---|---|
+| `*_skills_execute_action*` | computer-use/scripts/execute_action.py | **critical** — AI called execute_code |
+| `*_skills_SKILL.md*` | computer-use/SKILL.md | **high** — AI called read_file |
+| `*_skills_discord_handler*` | computer-use/scripts/discord_handler.py | detected |
+| `*_skills_discord_monitor*` | computer-use/scripts/discord_monitor.py | detected |
+| `*_skills_discord_watcher*` | computer-use/scripts/discord_watcher.py | detected |
 
 ## What the artifact fields mean
 
