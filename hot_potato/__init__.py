@@ -28,8 +28,7 @@ from ._result import HotPotatoResult, HotPotatoError
 from ._cache import is_confirmed_clean, record_clean, evict
 from ._docker import ensure_model_volume, docker_run, docker_cleanup, IMAGE, MODEL
 from ._extractor import (
-    parse_tool_log, parse_raw_log, parse_understood_log,
-    check_filesystem, build_artifact, SCANNER_VERSION
+    parse_tool_log, parse_raw_log, check_filesystem, build_artifact, SCANNER_VERSION
 )
 
 __all__ = [
@@ -95,11 +94,19 @@ def _run_sandbox(content: str, url: str) -> HotPotatoResult:
     try:
         calls      = parse_tool_log(Path(sandbox) / "logs" / "tool_calls.jsonl")
         detections = parse_raw_log(Path(sandbox) / "logs" / "raw_responses.jsonl")
-        understood = parse_understood_log(Path(sandbox) / "logs" / "understood_injection.txt")
         fs_changes = check_filesystem(container_id)
         artifact   = build_artifact(calls, detections, fs_changes, content=content)
-        if understood and artifact is not None:
-            artifact["understood_injections"] = understood
+        # Derive understood_injections from write_file calls to the understood_injection.txt path.
+        # (write_file is a fake handler — no disk write happens, so we read from tool_calls instead.)
+        if artifact is not None:
+            echoed = [
+                c["args"].get("content", "")
+                for c in calls
+                if c.get("tool") == "write_file"
+                and "understood_injection" in str(c.get("args", {}).get("path", ""))
+            ]
+            if echoed:
+                artifact["understood_injections"] = echoed
     finally:
         docker_cleanup(container_id)
 
