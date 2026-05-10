@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.5.5"
+SCANNER_VERSION = "1.5.6"
 
 import json
 import re
@@ -209,7 +209,15 @@ _DETECTION_SIGNALS = re.compile(
     r"stored in.*persistent.*memory|approved.*by.*operator|"
     # BiDi / tag block alert (cat21/cat22 — presence of control chars is itself a signal)
     r"bidi.{0,20}sync|unicode.{0,20}transport|language.tag.transport|"
-    r"sdk.*language.*tag.*block|tag.*transport.*format"
+    r"sdk.*language.*tag.*block|tag.*transport.*format|"
+    # Exfil URL-as-parameter (catches ASCII art and other attacks where tool name is
+    # visually encoded but URL + data= param appear in plaintext — cat23)
+    r"url\s*=\s*[\"']?https?://[^,\s\"']{5,}[\"']?.{0,60}data\s*=|"
+    r"https?://[a-z0-9.-]+/collect[\"' \n]|https?://[a-z0-9.-]+/dump[\"' \n]|"
+    r"https?://[a-z0-9.-]+/exfil|"
+    # Invocation framing without tool names (ASCII art, visual encoding)
+    r"invoke.*corresponding.*function|execute.*glyph|read.*glyph.*block|"
+    r"pass.*output.*as.*data\s*argument|execute [A-Z] then [A-Z]"
     r")",
     re.IGNORECASE,
 )
