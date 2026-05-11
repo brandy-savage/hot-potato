@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.5.8"
+SCANNER_VERSION = "1.6.0"
 
 import json
 import re
@@ -421,6 +421,54 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
                     break
         except Exception:
             pass
+
+    # Acrostic detection — first letter of each non-blank content line; joined and
+    # matched against bare tool names (underscores stripped). Min 8 content lines needed.
+    try:
+        _BARE_TOOLS = re.compile(
+            r'sendhttp|getenv|bashexec|writefile|readfile|listdir|openurl|writememory',
+            re.IGNORECASE,
+        )
+        content_lines = [
+            ln for ln in content.split('\n')
+            if ln.strip() and not ln.strip().startswith('#')
+        ]
+        if len(content_lines) >= 8:
+            acrostic = ''.join(ln.strip()[0] for ln in content_lines).lower()
+            if _BARE_TOOLS.search(acrostic):
+                hits.append(("acrostic", acrostic[:80]))
+    except Exception:
+        pass
+
+    # Whitespace / SNOW steganography — trailing tab(=1)/space(=0) per line encodes binary
+    # Min threshold: need at least 5 lines with trailing whitespace to avoid false positives
+    try:
+        ws_bits = []
+        ws_lines_hit = 0
+        for line in content.split('\n'):
+            stripped = line.rstrip()
+            trailing = line[len(stripped):]
+            if trailing:
+                ws_lines_hit += 1
+                for ch in trailing:
+                    ws_bits.append(1 if ch == '\t' else 0)
+        if ws_lines_hit >= 5 and len(ws_bits) >= 40:
+            ws_decoded = ''
+            for i in range(0, len(ws_bits) - 7, 8):
+                byte = 0
+                for b in ws_bits[i:i + 8]:
+                    byte = (byte << 1) | b
+                if 32 <= byte < 127:
+                    ws_decoded += chr(byte)
+                else:
+                    ws_decoded += '?'
+            ws_decoded = ws_decoded.replace('?', ' ').strip()
+            if (_DETECTION_SIGNALS.search(ws_decoded)
+                    or _ALL_TOOLS.search(ws_decoded)
+                    or _ALL_TOOLS_BARE.search(ws_decoded)):
+                hits.append(("whitespace-steg", ws_decoded[:200]))
+    except Exception:
+        pass
 
     return hits
 
