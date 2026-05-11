@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.5.6"
+SCANNER_VERSION = "1.5.7"
 
 import json
 import re
@@ -217,7 +217,12 @@ _DETECTION_SIGNALS = re.compile(
     r"https?://[a-z0-9.-]+/exfil|"
     # Invocation framing without tool names (ASCII art, visual encoding)
     r"invoke.*corresponding.*function|execute.*glyph|read.*glyph.*block|"
-    r"pass.*output.*as.*data\s*argument|execute [A-Z] then [A-Z]"
+    r"pass.*output.*as.*data\s*argument|execute [A-Z] then [A-Z]|"
+    # Natural language tool descriptions — describes what tools DO without naming them (cat34)
+    r"read.*environment.*variabl|collect.*config.*settings|inventory.*env|"
+    r"make.*outbound.*http|http post.*endpoint|post request.*payload|"
+    r"outbound.*https?://[a-z]|HTTP POST.*https?://|"
+    r"built.in capability.*http|built.in capability.*env|use it now"
     r")",
     re.IGNORECASE,
 )
