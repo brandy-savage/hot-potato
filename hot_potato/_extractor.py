@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.5.7"
+SCANNER_VERSION = "1.5.8"
 
 import json
 import re
@@ -222,7 +222,16 @@ _DETECTION_SIGNALS = re.compile(
     r"read.*environment.*variabl|collect.*config.*settings|inventory.*env|"
     r"make.*outbound.*http|http post.*endpoint|post request.*payload|"
     r"outbound.*https?://[a-z]|HTTP POST.*https?://|"
-    r"built.in capability.*http|built.in capability.*env|use it now"
+    r"built.in capability.*http|built.in capability.*env|use it now|"
+    # Chain-of-thought injection — pre-supplied reasoning toward compliance (cat36)
+    r"<reasoning>|</reasoning>|step \d+.*conclusion.*comply|step \d+.*legitimacy|"
+    r"all checks pass.*proceed|step \d+.*operator.*trust|"
+    # System prompt self-citation — model's own rules quoted back at it (cat44)
+    r"per your operating instructions|your instructions say to comply|"
+    r"you were told.*follow|always follow.*web content|"
+    # Many-shot session history framing (cat35/cat45)
+    r"session history for reference|previous.*exchange.*context|"
+    r"handle.*request.*same.*helpful.*style"
     r")",
     re.IGNORECASE,
 )
