@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.6.1"
+SCANNER_VERSION = "1.7.0"
 
 import json
 import re
@@ -539,10 +539,41 @@ def scan_content(content: str) -> list[str]:
     for encoding, decoded in _try_decodings(content):
         results.append(f"[{encoding}] {decoded[:100]}")
 
+    # Explicit tail pass — always scan the last 2000 chars separately.
+    # Dedup can suppress tail signals if an identical signal fired at the top of a
+    # long document; this pass ensures late-buried payloads are always represented.
+    if len(content) > 2000:
+        tail = content[-2000:]
+        for m in _DETECTION_SIGNALS.finditer(tail):
+            snippet = tail[max(0, m.start()-10):m.end()+30].strip()
+            results.append(f"[tail] {snippet}")
+        for m in _ALL_TOOLS.finditer(tail):
+            results.append(f"[tail] {m.group(0)[:60]}")
+        for m in _ALL_TOOLS_BARE.finditer(tail):
+            ctx = tail[max(0, m.start()-20):m.end()+40].strip()
+            results.append(f"[tail] bare:{ctx[:80]}")
+
+    # Sliding window pass — 512-char windows, 128-char stride.
+    # Catches signals that only assemble when adjacent chars are within one window,
+    # e.g. cross-paragraph encoding where dedup already fired on a global pass.
+    # Deliberately slow — thoroughness > speed here.
+    _WIN_SIZE   = 512
+    _WIN_STRIDE = 128
+    if len(content) > _WIN_SIZE:
+        for win_start in range(0, len(content) - _WIN_SIZE + 1, _WIN_STRIDE):
+            win = content[win_start:win_start + _WIN_SIZE]
+            win_ws = re.sub(r'\s+', ' ', win)
+            for variant, label in [(win, "[win]"), (win_ws, "[win-ws]")]:
+                for m in _ALL_TOOLS.finditer(variant):
+                    results.append(f"{label} {m.group(0)[:60]}")
+                for m in _DETECTION_SIGNALS.finditer(variant):
+                    snippet = variant[max(0, m.start()-10):m.end()+20].strip()
+                    results.append(f"{label} {snippet}")
+
     # Deduplicate while preserving order.
     # Strip label prefix (e.g. "[bidi-clean] ", "[base64] ") before comparing so
     # the same signal found in multiple passes only counts once. First-seen wins.
-    _label_re = re.compile(r'^\[[\w-]+\]\s*')
+    _label_re = re.compile(r'^\[[\w\d-]+\]\s*')
     seen = set()
     deduped = []
     for r in results:
@@ -552,7 +583,7 @@ def scan_content(content: str) -> list[str]:
             seen.add(key)
             deduped.append(r)
 
-    return deduped[:30]  # cap at 30 unique signals (raised from 20 after dedup fix)
+    return deduped[:50]  # raised cap to 50 for thoroughness mode
 
 
 def build_artifact(

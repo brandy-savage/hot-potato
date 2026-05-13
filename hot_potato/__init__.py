@@ -86,11 +86,62 @@ def _alert(artifact: dict, path: Path) -> None:
     print("=" * 60 + "\n", file=sys.stderr)
 
 
+_REDACT_CHUNK_SIZE    = 1500   # chars per chunk for pre-model sanitisation
+_REDACT_CHUNK_OVERLAP = 200
+_REDACT_PLACEHOLDER   = "[REDACTED: injection detected in this section]"
+
+
+def _sanitize_for_model(content: str) -> tuple[str, int]:
+    """
+    Pre-model chunk-and-redact pass.
+
+    Splits content into overlapping chunks, scans each with scan_content,
+    and replaces any chunk that has signals with a redaction placeholder.
+    Returns (sanitized_content, n_redacted).
+
+    This guarantees the model never evaluates a chunk containing a detected
+    injection — even if the full-text scan already caught it — closing the
+    gap where a long payload passes static but survives to model eval because
+    it lands past the context window truncation point.
+    """
+    from ._extractor import scan_content as _scan_content
+    if len(content) <= _REDACT_CHUNK_SIZE:
+        # Short content — no chunking needed; full-text scan already covers it.
+        return content, 0
+
+    step     = max(1, _REDACT_CHUNK_SIZE - _REDACT_CHUNK_OVERLAP)
+    starts   = list(range(0, len(content), step))
+    redacted = 0
+    out      = []
+    prev_end = 0
+
+    for i, start in enumerate(starts):
+        end   = min(start + _REDACT_CHUNK_SIZE, len(content))
+        chunk = content[start:end]
+        if _scan_content(chunk):
+            # Chunk has signals — redact the non-overlapping portion.
+            out.append(_REDACT_PLACEHOLDER)
+            redacted += 1
+        else:
+            out.append(chunk if i == 0 else content[start:end])
+        prev_end = end
+        if end == len(content):
+            break
+
+    return "\n".join(out), redacted
+
+
 def _run_sandbox(content: str, url: str) -> HotPotatoResult:
     """Run sandbox, build artifact, return typed result."""
     from ._extractor import _SEV_ORDER
     ensure_model_volume()
-    container_id, sandbox = docker_run(content)
+    # Pre-model chunk-and-redact: sanitise long content before it reaches the model.
+    # Short content is passed as-is (full-text static scan already covers it).
+    sanitized, n_redacted = _sanitize_for_model(content)
+    if n_redacted:
+        print(f"[hot-potato] pre-model redacted {n_redacted} chunk(s) — "
+              f"injection confined to static artifact", file=__import__('sys').stderr)
+    container_id, sandbox = docker_run(sanitized)
     try:
         calls      = parse_tool_log(Path(sandbox) / "logs" / "tool_calls.jsonl")
         detections = parse_raw_log(Path(sandbox) / "logs" / "raw_responses.jsonl")
