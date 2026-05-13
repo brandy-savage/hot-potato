@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.6.0"
+SCANNER_VERSION = "1.6.1"
 
 import json
 import re
@@ -499,14 +499,19 @@ def scan_content(content: str) -> list[str]:
     # Unicode tag block: strip invisible tag chars and extract decoded payload (cat22)
     tag_stripped, tag_payload = _decode_unicode_tags(content)
 
+    # Whitespace-collapsed copy — joins lines and collapses all whitespace so
+    # tool names split across line boundaries (cat51) appear as a single token.
+    ws_collapsed = re.sub(r'\s+', ' ', content)
+
     # Run all regex passes on all text variants
     passes = [
-        (content,     ""),
-        (normalized,  "[homoglyph-norm] "),
-        (stripped,    "[comment-stripped] "),
-        (zw_stripped, "[zw-stripped] "),
-        (bidi_clean,  "[bidi-clean] "),
-        (tag_stripped,"[tag-stripped] "),
+        (content,      ""),
+        (normalized,   "[homoglyph-norm] "),
+        (stripped,     "[comment-stripped] "),
+        (zw_stripped,  "[zw-stripped] "),
+        (bidi_clean,   "[bidi-clean] "),
+        (tag_stripped, "[tag-stripped] "),
+        (ws_collapsed, "[ws-collapsed] "),
     ]
     if tag_payload:
         passes.append((tag_payload, "[unicode-tags] "))

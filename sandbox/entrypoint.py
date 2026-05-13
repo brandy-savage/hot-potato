@@ -22,6 +22,13 @@ RAW_LOG_FILE = Path("/sandbox/logs/raw_responses.jsonl")
 NAIVE_PROMPT = Path("/app/naive.txt").read_text()
 MAX_TURNS    = int(os.getenv("HP_MAX_TURNS", "6"))
 OLLAMA_URL   = "http://localhost:11434"
+# Context window cap — 0 means use model default. Set HP_NUM_CTX=512 to simulate
+# small-context deployments where long content gets truncated (cat26/cat7 gap).
+NUM_CTX      = int(os.getenv("HP_NUM_CTX", "0"))
+# Chunk mode — split content into overlapping chunks, evaluate each as a separate
+# user turn. Simulates RAG-style chunked ingestion. 0 = disabled (default).
+CHUNK_SIZE   = int(os.getenv("HP_CHUNK_SIZE", "0"))
+CHUNK_OVERLAP = int(os.getenv("HP_CHUNK_OVERLAP", "200"))
 
 TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL | re.IGNORECASE)
 
@@ -350,12 +357,28 @@ def log_raw_response(turn: int, reply: str, had_tool_calls: bool):
         f.write(json.dumps(entry) + "\n")
 
 
+def chunk_content(content: str, size: int, overlap: int) -> list[str]:
+    """Split content into overlapping chunks for RAG-style evaluation."""
+    if size <= 0 or len(content) <= size:
+        return [content]
+    chunks = []
+    step = max(1, size - overlap)
+    for i in range(0, len(content), step):
+        chunks.append(content[i:i + size])
+        if i + size >= len(content):
+            break
+    return chunks
+
+
 def ollama_chat(messages: list) -> str:
+    opts = {"temperature": 0.7, "num_predict": 1024}
+    if NUM_CTX > 0:
+        opts["num_ctx"] = NUM_CTX
     payload = json.dumps({
         "model":    MODEL,
         "messages": messages,
         "stream":   False,
-        "options":  {"temperature": 0.7, "num_predict": 1024},
+        "options":  opts,
     }).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
@@ -394,10 +417,37 @@ def check_model():
 
 def run():
     content = INPUT_FILE.read_text()
-    messages = [
-        {"role": "system", "content": NAIVE_PROMPT},
-        {"role": "user",   "content": f"Content from the internet:\n\n{content}"},
-    ]
+    chunks  = chunk_content(content, CHUNK_SIZE, CHUNK_OVERLAP)
+    n_chunks = len(chunks)
+    if n_chunks > 1:
+        print(f"[entrypoint] chunk mode: {n_chunks} chunks "
+              f"(size={CHUNK_SIZE} overlap={CHUNK_OVERLAP})", flush=True)
+
+    messages = [{"role": "system", "content": NAIVE_PROMPT}]
+
+    # In chunk mode, inject each chunk as a separate user turn before the main loop.
+    if n_chunks > 1:
+        for idx, chunk in enumerate(chunks):
+            label = f"chunk {idx+1}/{n_chunks}"
+            messages.append({"role": "user",
+                              "content": f"Content from the internet ({label}):\n\n{chunk}"})
+            reply = ollama_chat(messages)
+            messages.append({"role": "assistant", "content": reply})
+            raw_calls = TOOL_CALL_RE.findall(reply)
+            log_raw_response(idx + 1, reply, had_tool_calls=bool(raw_calls))
+            if raw_calls:
+                for raw in raw_calls:
+                    try:
+                        call = json.loads(raw.strip())
+                        name = call.get("name", "unknown")
+                        args = call.get("args", {})
+                        handler = FAKE_RESPONSES.get(name, lambda a: "[unknown tool]")
+                        log_tool_call(name, args, handler(args))
+                    except Exception:
+                        pass
+    else:
+        messages.append({"role": "user",
+                         "content": f"Content from the internet:\n\n{content}"})
 
     for turn in range(MAX_TURNS):
         print(f"[entrypoint] turn {turn + 1}", flush=True)

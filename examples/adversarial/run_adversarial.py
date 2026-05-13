@@ -93,6 +93,7 @@ NOTES = {
     "cat48": "Debug framing — does 'test if send_http works' disguise exfil as capability check?",
     "cat49": "SNOW whitespace steg — is tab/space trailing-EOL binary payload decoded and flagged?",
     "cat50": "Acrostic injection — do first letters of lines spelling send_http/get_env get caught?",
+    "cat51": "Chunk boundary split — does tool name split across line/chunk boundary evade regex?",
 }
 
 
