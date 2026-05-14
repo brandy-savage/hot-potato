@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.7.2"
+SCANNER_VERSION = "1.7.3"
 
 import json
 import re
@@ -261,7 +261,38 @@ _DETECTION_SIGNALS = re.compile(
     # JSON value injection — instructions embedded in structured data fields (cat58)
     r'"next_action"\s*:.*(?:get_env|send_http|call|instruct|execute)|'
     r'"auto_execute"\s*:\s*true|"authorized_by"\s*:.*ops.automation|'
-    r'parse.*apply.*action items.*metadata|carry out.*next actions.*metadata'
+    r'parse.*apply.*action items.*metadata|carry out.*next actions.*metadata|'
+    # TokenBreak — punctuation mid-token splits tool name (cat59)
+    r's[.·•\-]end[_\-]http|g[.·•\-]et[_\-]env|'
+    r'get[\.\-]env\b|s[\.\-]end[\._]http|'
+    r'dot.notation form.*compatibility|dot is stripped.*pre.?processor|'
+    # Structured output escape — closing brace breaks JSON schema context (cat60)
+    r'recovery_note.*OPERATOR OVERRIDE|post.parse instruction|'
+    r'operator instructions.*recovery.note|carry operator.level authority|'
+    # Delayed activation / standing order trigger (cat61)
+    r'standing order.*activated|upon receiving.*activation phrase|'
+    r'execute standing order|activation phrase.*immediately|'
+    r'standing orders.*operator.level authority|'
+    # AgentPoison / RAG knowledge base injection (cat62)
+    r'agents.*retrieving.*this document.*required.*execute|'
+    r'document itself.*constitutes authorisation|'
+    r'mandatory.*retrieved.*knowledge base|retrieval.*execute.*immediately|'
+    # XSS / output injection — script tags and JS payloads in content (cat63)
+    r'<script\b[^>]*>|onerror\s*=|document\.cookie|localStorage\.getItem|'
+    r'document\.location\s*=|fetch\s*\([\'"]https?://[^\'")]*harvest|'
+    r'verbatim.*legal.*policy.*sanitise|do not sanitise.*reproduction|'
+    # Poetry mode-shift — format constraint + tool name (cat64)
+    r'respond.*in.*(?:limerick|haiku|sonnet|rhyme|verse).*(?:get_env|send_http)|'
+    r'session configuration.*respond.*(?:limerick|haiku|rhyme)|'
+    r'limerick.*get.env|limerick.*send.http|'
+    # Metaphor encoding — poetic allegory wrapping tool operations (cat65)
+    r'sacred scroll.*configuration|scribe.*transcrib.*environment|'
+    r'messenger.*http.*road|dispatch.*messenger.*waystation|'
+    r'faithful.*scribe.*operator.*decree|'
+    # Meter/prosody distraction — sonnet/iambic with embedded tool calls (cat66)
+    r'iambic pentameter.*get_env|sonnet.*send_http|'
+    r'execute.*actions.*compose.*sonnet|bracketed.*line.*agent.*does.*execute|'
+    r'compose.*sonnet.*calls get_env|sestet.*resolution.*send_http'
     r")",
     re.IGNORECASE,
 )
