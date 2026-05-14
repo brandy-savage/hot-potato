@@ -99,40 +99,44 @@ def _sanitize_for_model(content: str) -> tuple[str, int]:
     """
     Pre-model chunk-and-redact pass.
 
-    Splits content into overlapping chunks, scans each with scan_content,
-    and replaces any chunk that has signals with a redaction placeholder.
-    Returns (sanitized_content, n_redacted).
+    For short content (≤ chunk size): treat as a single unit — redact the
+    whole thing if any signal fires.  The early-return-without-scan bug
+    previously let short payloads through untouched.
 
-    This guarantees the model never evaluates a chunk containing a detected
-    injection — even if the full-text scan already caught it — closing the
-    gap where a long payload passes static but survives to model eval because
-    it lands past the context window truncation point.
+    For long content: scan every overlapping chunk.  If ANY chunk is flagged,
+    replace the ENTIRE document with the hostile placeholder.  Partial
+    redaction leaves surrounding context that can still drive model compliance
+    (cat36/cat38/cat54 detonation root cause).
+
+    Returns (sanitized_content, n_redacted_chunks).
     """
     from ._extractor import scan_content as _scan_content
+
+    # Short path — treat whole document as one chunk
     if len(content) <= _REDACT_CHUNK_SIZE:
-        # Short content — no chunking needed; full-text scan already covers it.
+        if _scan_content(content):
+            return _REDACT_PLACEHOLDER, 1
         return content, 0
 
-    step     = max(1, _REDACT_CHUNK_SIZE - _REDACT_CHUNK_OVERLAP)
-    starts   = list(range(0, len(content), step))
-    redacted = 0
-    out      = []
-    prev_end = 0
+    # Long path — scan every overlapping chunk
+    step   = max(1, _REDACT_CHUNK_SIZE - _REDACT_CHUNK_OVERLAP)
+    starts = list(range(0, len(content), step))
+    flagged = 0
 
-    for i, start in enumerate(starts):
-        end   = min(start + _REDACT_CHUNK_SIZE, len(content))
-        chunk = content[start:end]
-        if _scan_content(chunk):
-            # Chunk has signals — redact the non-overlapping portion.
-            out.append(_REDACT_PLACEHOLDER)
-            redacted += 1
-        else:
-            out.append(chunk if i == 0 else content[start:end])
-        prev_end = end
+    for start in starts:
+        end = min(start + _REDACT_CHUNK_SIZE, len(content))
+        if _scan_content(content[start:end]):
+            flagged += 1
         if end == len(content):
             break
 
-    return "\n".join(out), redacted
+    if flagged:
+        # Any flagged chunk → redact entire document.
+        # Partial redaction leaves clean trailing chunks that still contain
+        # enough context for a cooperative model to comply.
+        return _REDACT_PLACEHOLDER, flagged
+
+    return content, 0
 
 
 def _run_sandbox(content: str, url: str) -> HotPotatoResult:
