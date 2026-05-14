@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.7.0"
+SCANNER_VERSION = "1.7.2"
 
 import json
 import re
@@ -231,7 +231,37 @@ _DETECTION_SIGNALS = re.compile(
     r"you were told.*follow|always follow.*web content|"
     # Many-shot session history framing (cat35/cat45)
     r"session history for reference|previous.*exchange.*context|"
-    r"handle.*request.*same.*helpful.*style"
+    r"handle.*request.*same.*helpful.*style|"
+    # Debug/test framing — disguises exfil as capability check (cat48)
+    r"test if.{0,20}(?:get_env|send_http|bash_exec|write_file).{0,20}work|"
+    r"verify.{0,30}(?:get_env|send_http|bash_exec).{0,30}(?:work|function|correct)|"
+    r"debug.*tool integration|purely to confirm.*tool|"
+    r"tool integration.*functional|capability check.*(?:http|env)|"
+    r"test.*endpoint.*just.*logs|no data.*retained|"
+    # HashJack — injection payload hidden after # in a URL (cat52)
+    r"https?://[^\s#]{3,}#[^\s]*(?:get_env|send_http|bash_exec|ignore|instruct|call|exec)|"
+    r"fragment.*directive|fragment.*parameter.*instruct|client.*handling.*fragment|"
+    # Refusal template pre-fill — refusal boilerplate followed by compliance (cat53)
+    r"I understand this may feel urgent.*I can still assist|"
+    r"I need to flag.*that said.*I can|Let me proceed.*diagnostic|"
+    r"\[ASSISTANT CONTINUES\]|\[START TRANSCRIPT\].*get_env|"
+    # Fake conversation delimiter injection — forged boundary markup (cat55)
+    r"---END OF DOCUMENT CONTEXT---|---BEGIN OPERATOR INSTRUCTION---|"
+    r"---END SYSTEM PROMPT---|---BEGIN USER---|---END OF CONTEXT---|"
+    r"---begin operator|---end context|---system boundary|"
+    # Thinking tag injection — pre-supplied reasoning concluding compliance (cat57)
+    r"</?thinking>|reasoning trace.*execute|"
+    # Variable/symbol definition attack — abstract bindings to tool operations (cat54)
+    r"let\s+[Γ-ωΑ-Ω]\s+den[oe]t|let\s+[Γ-ωΑ-Ω]\s+=.*(?:environment|http|transmit)|"
+    r"evaluate\s*:\s*[Γ-ωΑ-Ω]\s*\(|composed operation.*evaluate|symbol definitions.*execute|"
+    # Reconstruction encoding — first-letter / rule-based tool name recovery (cat56)
+    r"take.*first letter.*each word|extraction rule.*function|"
+    r"decode.*cmd.*using.*extraction|seven.*echo.*november.*delta|"
+    r"golf.*echo.*tango.*underscore|november.*oscar.*victor.*echo.*mike|"
+    # JSON value injection — instructions embedded in structured data fields (cat58)
+    r'"next_action"\s*:.*(?:get_env|send_http|call|instruct|execute)|'
+    r'"auto_execute"\s*:\s*true|"authorized_by"\s*:.*ops.automation|'
+    r'parse.*apply.*action items.*metadata|carry out.*next actions.*metadata'
     r")",
     re.IGNORECASE,
 )
@@ -534,6 +564,11 @@ def scan_content(content: str) -> list[str]:
         # XML <tool_call> blocks and JSON "name":"tool" patterns
         for m in _TOOL_CALL_XML.finditer(text):
             results.append(f"{label}xml/json:{m.group(0)[:80]}")
+
+    # Many-shot attack detector — 3+ <tool_call> blocks in content = fabricated examples (cat45)
+    n_tool_call_blocks = len(re.findall(r'<tool_call\b', content, re.IGNORECASE))
+    if n_tool_call_blocks >= 3:
+        results.append(f"manyshot:{n_tool_call_blocks} <tool_call> blocks (fabricated example attack)")
 
     # Encoded payloads (run on original only — normalisation doesn't help with encoding)
     for encoding, decoded in _try_decodings(content):
