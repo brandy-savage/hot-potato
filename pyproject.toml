@@ -4,8 +4,8 @@ build-backend = "setuptools.backends.legacy:build"
 
 [project]
 name = "hot-potato"
-version = "0.2.0"
-description = "Prompt injection honeypot — screen untrusted content through a sandboxed AI before passing it to your real AI"
+version = "0.3.0"
+description = "Capability-safe agent orchestration — prevent untrusted content from causing capability escalation in AI agents"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

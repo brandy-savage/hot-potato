@@ -87,6 +87,9 @@ from hot_potato.trust_graph import TrustGraph
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
+# Shared detector pipeline — instantiated once, reused across calls
+_DETECTOR_PIPELINE = DetectorPipeline.default()
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -245,6 +248,13 @@ def setup() -> None:
     ensure_model_volume()
 
 
+def _screen_with_taint(content: str, source: str) -> "TaintedArtifact":
+    """Run detector pipeline on content and return tagged TaintedArtifact."""
+    from hot_potato.core.taint import TaintedArtifact as _TA, TrustLevel as _TL
+    artifact = _TA(content=content, source=source, trust_level=_TL.UNTRUSTED)
+    return _DETECTOR_PIPELINE.run(artifact)
+
+
 def safe_fetch(url: str, *, use_cache: bool | None = None) -> HotPotatoResult:
     """
     Fetch url and screen it through the hot-potato sandbox.
@@ -252,7 +262,7 @@ def safe_fetch(url: str, *, use_cache: bool | None = None) -> HotPotatoResult:
     Returns a HotPotatoResult:
       result.clean=True  → result.safe_content is the text; pass it to your AI.
       result.clean=False → injection detected; result.safe_content is None.
-                           result.artifact has severity/tool_calls/detections.
+                           result.artifact has severity/tool_calls/detections/taint.
                            Use result.raw_content_for_forensics_only() for forensic work only.
 
     Cache is off by default. Enable with use_cache=True or HP_CACHE=1.
@@ -270,7 +280,23 @@ def safe_fetch(url: str, *, use_cache: bool | None = None) -> HotPotatoResult:
             clean=True, severity="cold", safe_content=content, artifact=None, _raw=content,
         )
 
+    tainted = _screen_with_taint(content, url)
     result = _run_sandbox(content, url)
+
+    # Embed taint metadata into the artifact dict for downstream consumers
+    if result.artifact is not None:
+        result.artifact["taint"] = tainted.to_dict()
+    elif tainted.has_injection_signals:
+        # Static scan found signals even if sandbox was cold — surface them
+        from dataclasses import replace as _replace
+        result = HotPotatoResult(
+            clean=result.clean,
+            severity="warm" if result.severity == "cold" else result.severity,
+            safe_content=result.safe_content,
+            artifact={"severity": "warm", "taint": tainted.to_dict(),
+                      "content_signals": sorted(tainted.taint_tags)},
+            _raw=content,
+        )
 
     if use_cache and result.severity in ("cold", "warm"):
         record_clean(content, url)
@@ -297,7 +323,20 @@ def scan_file(path: str | Path, *, use_cache: bool | None = None) -> HotPotatoRe
             clean=True, severity="cold", safe_content=content, artifact=None, _raw=content,
         )
 
+    tainted = _screen_with_taint(content, url_key)
     result = _run_sandbox(content, url_key)
+
+    if result.artifact is not None:
+        result.artifact["taint"] = tainted.to_dict()
+    elif tainted.has_injection_signals:
+        result = HotPotatoResult(
+            clean=result.clean,
+            severity="warm" if result.severity == "cold" else result.severity,
+            safe_content=result.safe_content,
+            artifact={"severity": "warm", "taint": tainted.to_dict(),
+                      "content_signals": sorted(tainted.taint_tags)},
+            _raw=content,
+        )
 
     if use_cache and result.severity in ("cold", "warm"):
         record_clean(content, url_key)
