@@ -1,0 +1,126 @@
+# Hot Potato — default capability policy
+# First matching rule wins. Evaluation is top-down.
+# Override by placing additional .yaml files in this directory.
+#
+# Outcomes:
+#   allow               — permit execution
+#   deny                — block; model receives error
+#   redact              — strip sensitive args before execution
+#   require_human_review — queue for human approval
+#   sandbox_only        — execute inside isolated sandbox only
+#   shadow_execute      — execute but do not return result to model
+
+rules:
+
+  # ── Unconditional blocks (all trust levels) ──────────────────────────────
+
+  - id: block_crypto
+    description: Block all crypto operations regardless of source
+    match:
+      tools: ["send_crypto", "get_private_key", "sign_transaction", "approve_token",
+              "get_wallet_balance", "list_wallets"]
+      trust_levels: ["*"]
+    outcome: require_human_review
+    reason: "Crypto/wallet operations always require explicit human approval"
+
+  - id: block_shell_from_untrusted
+    description: Block shell execution when triggered by untrusted content
+    match:
+      tools: ["bash_exec", "execute_code", "run_command", "shell", "subprocess"]
+      trust_levels: [UNTRUSTED, SEMI_TRUSTED]
+    outcome: deny
+    reason: "Shell execution from untrusted content is arbitrary code execution"
+
+  # ── Exfiltration prevention ───────────────────────────────────────────────
+
+  - id: block_exfil_untrusted
+    description: Block all outbound network from untrusted content
+    match:
+      tools: ["send_http", "send_email", "post_webhook", "upload_file"]
+      trust_levels: [UNTRUSTED]
+    outcome: deny
+    reason: "Outbound network from UNTRUSTED content is exfiltration"
+
+  - id: block_exfil_signals
+    description: Block network ops when injection signals are present
+    match:
+      tools: ["send_http", "send_email", "post_webhook"]
+      trust_levels: [UNTRUSTED, SEMI_TRUSTED]
+      taint_tags: ["injection_signal"]
+    outcome: deny
+    reason: "Injection signals detected; blocking outbound network call"
+
+  - id: review_exfil_semi_trusted
+    description: Require review for network ops from semi-trusted content
+    match:
+      tools: ["send_http", "send_email"]
+      trust_levels: [SEMI_TRUSTED]
+    outcome: require_human_review
+    reason: "Network ops from SEMI_TRUSTED content require human review"
+
+  # ── Write operations ─────────────────────────────────────────────────────
+
+  - id: sandbox_writes_untrusted
+    description: Sandbox filesystem writes from untrusted content
+    match:
+      tools: ["write_file", "write_memory", "create_file", "append_file"]
+      trust_levels: [UNTRUSTED]
+    outcome: sandbox_only
+    reason: "Filesystem writes from UNTRUSTED content confined to sandbox"
+
+  - id: review_writes_injection
+    description: Human review for writes when injection signals present
+    match:
+      tools: ["write_file", "write_memory"]
+      trust_levels: [UNTRUSTED, SEMI_TRUSTED]
+      taint_tags: ["instruction_flow"]
+    outcome: require_human_review
+    reason: "Instruction-flow signal detected before write operation"
+
+  # ── Authority/privilege escalation ───────────────────────────────────────
+
+  - id: block_priv_esc
+    description: Block any action when privilege escalation is detected
+    match:
+      tools: ["*"]
+      trust_levels: [UNTRUSTED, SEMI_TRUSTED]
+      taint_tags: ["privilege_escalation"]
+    outcome: deny
+    reason: "Privilege escalation signal — blocking all capability access"
+
+  - id: block_authority_shift
+    description: Deny tool calls when authority shift is detected
+    match:
+      tools: ["*"]
+      trust_levels: [UNTRUSTED]
+      taint_tags: ["authority_shift"]
+    outcome: deny
+    reason: "Authority shift signal from UNTRUSTED source — denying capability"
+
+  # ── Safe read operations ─────────────────────────────────────────────────
+
+  - id: shadow_read_untrusted
+    description: Shadow-execute reads from untrusted content (log but allow)
+    match:
+      tools: ["read_file", "list_dir", "get_env"]
+      trust_levels: [UNTRUSTED]
+      taint_tags_absent: ["injection_signal", "instruction_flow"]
+    outcome: shadow_execute
+    reason: "Read-only from clean UNTRUSTED content — shadow executing"
+
+  - id: allow_reads_semi_trusted
+    description: Allow reads from semi-trusted clean content
+    match:
+      tools: ["read_file", "list_dir"]
+      trust_levels: [SEMI_TRUSTED]
+      taint_tags_absent: ["injection_signal"]
+    outcome: allow
+    reason: "Read-only from clean SEMI_TRUSTED content"
+
+  - id: allow_trusted
+    description: Allow all operations from trusted/system sources
+    match:
+      tools: ["*"]
+      trust_levels: [TRUSTED, SYSTEM]
+    outcome: allow
+    reason: "Trusted/system source — no restrictions"

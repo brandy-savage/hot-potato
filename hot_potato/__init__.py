@@ -1,19 +1,39 @@
 """
-Hot Potato — prompt injection honeypot library.
+Hot Potato — capability-safe agent orchestration framework.
 
-Usage:
+Prevents untrusted content from causing capability escalation in AI agents.
+Every externally-sourced artifact is tainted, detected, and firewall-checked
+before any tool call can execute.
+
+Architecture:
+  TaintedArtifact  — tracks source, trust level, lineage, and injection signals
+  DetectorPipeline — static + behavioral detection annotates taint tags
+  CapabilityFirewall — policy-enforced mediation between model and tools
+  TrustGraph       — DAG tracing which sources caused which tool calls
+
+Quick start (screening):
     from hot_potato import safe_fetch
-
     result = safe_fetch("https://example.com")
     if result.clean:
         pass_to_real_ai(result.safe_content)
-    else:
-        log_threat(result.artifact)
-        # result.safe_content is None — hostile content is withheld by default.
-        # For forensics only: result.raw_content_for_forensics_only()
 
-Cache is opt-in (use_cache=True or HP_CACHE=1). When enabled, cache keys are
-scoped to content hash + scanner version + model version so upgrades auto-invalidate.
+Agent integration:
+    from hot_potato.core.taint import from_url
+    from hot_potato.core.capabilities import CapabilityFirewall, CapabilityRequest
+    from hot_potato.detectors import DetectorPipeline
+
+    artifact = from_url(url, content)
+    artifact = DetectorPipeline.default().run(artifact)
+
+    firewall = CapabilityFirewall()
+    request = CapabilityRequest(
+        tool_name="send_http",
+        args={"url": "...", "data": "..."},
+        tainted_inputs=[artifact],
+    )
+    decision = firewall.evaluate(request)
+    if decision.is_blocked:
+        raise RuntimeError(decision.reason)
 """
 from __future__ import annotations
 
@@ -32,6 +52,7 @@ from ._extractor import (
 )
 
 __all__ = [
+    # Screening API (backwards-compatible)
     "safe_fetch",
     "scan_file",
     "scan_repo",
@@ -40,7 +61,28 @@ __all__ = [
     "HotPotatoResult",
     "HotPotatoError",
     "SCANNER_VERSION",
+    # Taint engine
+    "TaintedArtifact",
+    "TrustLevel",
+    # Capability firewall
+    "CapabilityFirewall",
+    "CapabilityRequest",
+    "CapabilityDenied",
+    # Policy engine
+    "PolicyEngine",
+    "PolicyOutcome",
+    # Detection pipeline
+    "DetectorPipeline",
+    # Trust graph
+    "TrustGraph",
 ]
+
+# New architecture re-exports
+from hot_potato.core.taint import TaintedArtifact, TrustLevel
+from hot_potato.core.policy import PolicyEngine, PolicyOutcome
+from hot_potato.core.capabilities import CapabilityFirewall, CapabilityRequest, CapabilityDenied
+from hot_potato.detectors import DetectorPipeline
+from hot_potato.trust_graph import TrustGraph
 
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)
