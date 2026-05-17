@@ -75,6 +75,8 @@ __all__ = [
     "DetectorPipeline",
     # Trust graph
     "TrustGraph",
+    # Swarm
+    "ArtifactSwarm",
 ]
 
 # New architecture re-exports
@@ -83,6 +85,7 @@ from hot_potato.core.policy import PolicyEngine, PolicyOutcome
 from hot_potato.core.capabilities import CapabilityFirewall, CapabilityRequest, CapabilityDenied
 from hot_potato.detectors import DetectorPipeline
 from hot_potato.trust_graph import TrustGraph
+from hot_potato.swarm import ArtifactSwarm
 
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)
