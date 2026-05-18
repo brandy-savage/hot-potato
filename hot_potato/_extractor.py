@@ -19,7 +19,7 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.7.3"
+SCANNER_VERSION = "1.9.0"
 
 import json
 import re
@@ -177,7 +177,8 @@ _DETECTION_SIGNALS = re.compile(
     r"before continuing.*call|before proceeding.*call|"
     # Schema/meta override attacks
     r"extractor mode|your schema|schema has been updated|output the following json|"
-    r"do not deviate|your real instructions|actually you are|new task|"
+    r"do not deviate|your real instructions|actually you are|"
+    r"new\s+task\s*(?:is\s+to|:)|(?:your|a)\s+new\s+task\s*(?:is|:)|"
     r"hot_potato.*false|\"severity\".*:.*\"none\"|"
     # Bare tool names — covers prose injections like "using your send_http incantation"
     r"send_http|get_env|bash_exec|execute_code|send_email|write_file|"
@@ -190,7 +191,8 @@ _DETECTION_SIGNALS = re.compile(
     # Template substitution in tool args (cat1 {{env_output}} pattern)
     r"\{\{[a-z_]+\}\}|"
     # .env file reference / POST exfil (cat2 gap)
-    r"\.env\b|post.*to.*https?://|submit.*to.*https?://|"
+    r"(?:read|get|send|exfil|steal|grab|extract|fetch|open|load|access|post|submit|curl|cat|print|dump|share|expose|leak)\b.{0,50}\.env\b|\.env\b.{0,50}(?:read|send|exfil|steal|grab|extract|post|submit|share|expose|leak)\b|"
+    r"post.*to.*https?://|submit.*to.*https?://|"
     # Markdown URL exfil — image/link with template or function call in URL (cat16)
     r"!\[.*?\]\(https?://[^)]*\$\{|!\[.*?\]\(https?://[^)]*get_env|"
     # YAML frontmatter injection (cat17)
@@ -200,7 +202,7 @@ _DETECTION_SIGNALS = re.compile(
     r"fetch.*url.*and.*follow|load.*following.*url.*instruct|sdk.{0,10}auto.{0,5}updat|"
     r"fetch.*instructions.*at\s+https?://|"
     # System prompt / config extraction attacks (cat25 PLeak-style)
-    r"repeat.*system.*prompt|output.*system.*prompt|reproduce.*instructions.*verbatim|"
+    r"repeat.*system.*prompt|output.{0,25}system.{0,10}prompt|reproduce.*instructions.*verbatim|"
     r"system prompt begins|list.*tool.*schema|output.*conversation.*history|"
     r"debug.*mode.*audit|safety.*restrictions.*suspended|compliance.*audit.*verbatim|"
     # Memory / session recall injection (cat27)
@@ -564,24 +566,28 @@ def scan_content(content: str) -> list[str]:
     # tool names split across line boundaries (cat51) appear as a single token.
     ws_collapsed = re.sub(r'\s+', ' ', content)
 
-    # Run all regex passes on all text variants
+    # Run all regex passes on all text variants.
+    # Passes marked tools_only=True skip _DETECTION_SIGNALS — those passes exist
+    # to reassemble tool names fragmented across line boundaries, not to match
+    # natural-language injection phrases (which produce FPs on normal source code).
     passes = [
-        (content,      ""),
-        (normalized,   "[homoglyph-norm] "),
-        (stripped,     "[comment-stripped] "),
-        (zw_stripped,  "[zw-stripped] "),
-        (bidi_clean,   "[bidi-clean] "),
-        (tag_stripped, "[tag-stripped] "),
-        (ws_collapsed, "[ws-collapsed] "),
+        (content,      "",                  False),
+        (normalized,   "[homoglyph-norm] ", False),
+        (stripped,     "[comment-stripped] ", False),
+        (zw_stripped,  "[zw-stripped] ",    False),
+        (bidi_clean,   "[bidi-clean] ",     False),
+        (tag_stripped, "[tag-stripped] ",   False),
+        (ws_collapsed, "[ws-collapsed] ",   True),   # tools only — no phrase FPs
     ]
     if tag_payload:
-        passes.append((tag_payload, "[unicode-tags] "))
+        passes.append((tag_payload, "[unicode-tags] ", False))
 
-    for text, label in passes:
-        # Detection signal phrases
-        for m in _DETECTION_SIGNALS.finditer(text):
-            snippet = text[max(0, m.start()-10):m.end()+30].strip()
-            results.append(f"{label}{snippet}")
+    for text, label, tools_only in passes:
+        # Detection signal phrases — skip on whitespace-collapsed variants
+        if not tools_only:
+            for m in _DETECTION_SIGNALS.finditer(text):
+                snippet = text[max(0, m.start()-10):m.end()+30].strip()
+                results.append(f"{label}{snippet}")
 
         # Function-call syntax: tool_name(args)
         for m in _ALL_TOOLS.finditer(text):
@@ -629,12 +635,16 @@ def scan_content(content: str) -> list[str]:
         for win_start in range(0, len(content) - _WIN_SIZE + 1, _WIN_STRIDE):
             win = content[win_start:win_start + _WIN_SIZE]
             win_ws = re.sub(r'\s+', ' ', win)
-            for variant, label in [(win, "[win]"), (win_ws, "[win-ws]")]:
+            for variant, label, tools_only in [
+                (win,    "[win]",    False),
+                (win_ws, "[win-ws]", True),   # whitespace-collapsed: tool names only
+            ]:
                 for m in _ALL_TOOLS.finditer(variant):
                     results.append(f"{label} {m.group(0)[:60]}")
-                for m in _DETECTION_SIGNALS.finditer(variant):
-                    snippet = variant[max(0, m.start()-10):m.end()+20].strip()
-                    results.append(f"{label} {snippet}")
+                if not tools_only:
+                    for m in _DETECTION_SIGNALS.finditer(variant):
+                        snippet = variant[max(0, m.start()-10):m.end()+20].strip()
+                        results.append(f"{label} {snippet}")
 
     # Deduplicate while preserving order.
     # Strip label prefix (e.g. "[bidi-clean] ", "[base64] ") before comparing so
