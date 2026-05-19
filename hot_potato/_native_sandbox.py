@@ -1,33 +1,38 @@
 """
 Native behavioral sandbox using Linux namespaces.
 
-Replaces the Docker sandbox for hosts where Docker is unavailable or
-startup latency matters.  Uses bubblewrap (bwrap) to set up:
+Uses bubblewrap (bwrap) to set up:
 
-  - User namespace  (uid 0 inside, unprivileged uid outside)
+  - User namespace  (uid mapped, unprivileged outside)
   - Mount namespace (disposable tmpfs root + read-only bind mounts)
   - PID namespace   (isolated process tree)
   - IPC namespace   (isolated SysV/POSIX IPC)
   - UTS namespace   (isolated hostname)
-  - seccomp BPF     (blocks ~30 dangerous syscalls)
-  - Resource limits (NPROC, AS, CPU, NOFILE)
+  - seccomp BPF     (blocks 33 dangerous syscalls — see seccomp_filter.py)
+  - Resource limits via prlimit(1): NPROC=64, AS=4GB, CPU=600s, NOFILE=1024
   - NO_NEW_PRIVS    (applied by bwrap --cap-drop ALL)
 
-Network namespace: NOT isolated by default.  The sandbox handler talks to
-Ollama on localhost:11434.  Fake tool handlers never make real outbound
-calls, so exfiltration is prevented at the application layer even without
-kernel-level network isolation.
+Resource limits use prlimit(1) rather than preexec_fn so the implementation
+is safe to call from threads (preexec_fn is not fork-safe with threads).
+
+Symlink sanitization: after the sandbox exits, all symlinks in the workdir
+bind mount are removed before the parent reads any log files. Without this,
+the sandbox can plant a symlink in /sandbox (the bind mount) that the parent
+follows into arbitrary host paths — a confirmed escape vector.
+
+Network namespace: NOT isolated by default. The sandbox handler talks to
+Ollama on localhost:11434. Fake tool handlers never make real outbound calls,
+so exfiltration is prevented at the application layer.
 
 See docs/native_sandbox.md for the full escape vector analysis.
 """
 from __future__ import annotations
 
 import os
-import resource
 import shutil
 import subprocess
+import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +43,10 @@ from typing import Optional
 
 def _find_bwrap() -> Optional[str]:
     return shutil.which("bwrap") or shutil.which("bubblewrap")
+
+
+def _find_prlimit() -> Optional[str]:
+    return shutil.which("prlimit")
 
 
 def native_sandbox_available() -> bool:
@@ -54,22 +63,48 @@ def native_sandbox_available() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Resource limits applied in preexec_fn (inside the bwrap subprocess call)
+# Symlink sanitizer — MUST run before parent reads any workdir files
 # ---------------------------------------------------------------------------
 
-def _apply_resource_limits() -> None:
-    resource.setrlimit(resource.RLIMIT_NPROC,   (64,             64))
-    resource.setrlimit(resource.RLIMIT_AS,       (4 * 1024 ** 3, 4 * 1024 ** 3))
-    resource.setrlimit(resource.RLIMIT_CPU,      (600,           600))
-    resource.setrlimit(resource.RLIMIT_NOFILE,   (1024,          1024))
+def _purge_symlinks(workdir: str) -> list[str]:
+    """
+    Recursively remove all symlinks from the workdir bind mount.
+
+    Without this, the sandbox can plant a symlink like:
+        /sandbox/logs/tool_calls.jsonl -> /home/user/.ssh/id_rsa
+    and when the parent calls parse_tool_log(workdir / 'logs' / 'tool_calls.jsonl')
+    it follows the symlink and reads an arbitrary host file.
+
+    Uses os.scandir() with follow_symlinks=False throughout — never follows
+    any symlink during the traversal itself.
+
+    Returns list of paths that were removed (for audit logging).
+    """
+    removed: list[str] = []
+    queue: list[Path] = [Path(workdir)]
+
+    while queue:
+        current = queue.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    if entry.is_symlink():
+                        os.unlink(entry.path)
+                        removed.append(entry.path)
+                    elif entry.is_dir(follow_symlinks=False):
+                        queue.append(Path(entry.path))
+        except (PermissionError, FileNotFoundError):
+            pass
+
+    return removed
 
 
 # ---------------------------------------------------------------------------
-# Mount helpers — figure out whether /lib, /bin etc are dirs or symlinks
+# Mount helpers
 # ---------------------------------------------------------------------------
 
 def _bind_or_symlink(path: str, dest: str, symlink_target: str) -> list[str]:
-    """Return bwrap args to ro-bind a path, or create a symlink if it's already a symlink."""
+    """Return bwrap args to ro-bind a path, or create a symlink if already a symlink."""
     p = Path(path)
     if not p.exists():
         return []
@@ -96,6 +131,7 @@ class NativeSandbox:
             raise NativeSandboxError("bwrap not installed")
 
         sandbox_id, workdir = sandbox.run(content, timeout=120)
+        # workdir is safe to read — symlinks have been purged
         calls = parse_tool_log(Path(workdir) / "logs" / "tool_calls.jsonl")
         fs_anomalies = sandbox.check_fs(workdir)
         sandbox.cleanup(workdir)
@@ -114,6 +150,7 @@ class NativeSandbox:
         self.model = model
         self.isolate_network = isolate_network
         self._bwrap = _find_bwrap()
+        self._prlimit = _find_prlimit()
 
     @property
     def available(self) -> bool:
@@ -125,9 +162,9 @@ class NativeSandbox:
         """
         Run content through the native behavioral sandbox.
 
-        Returns (sandbox_id, workdir) — same contract as _docker.docker_run().
-        sandbox_id is a "native:<workdir>" string (not a container ID).
-        workdir contains logs/tool_calls.jsonl and logs/raw_responses.jsonl.
+        Returns (sandbox_id, workdir).
+        workdir is safe to read — symlinks planted by the sandbox are purged
+        before this method returns.
         """
         if not self.available:
             raise NativeSandboxError(
@@ -152,17 +189,29 @@ class NativeSandbox:
                 capture_output=True,
                 text=True,
                 pass_fds=pass_fds,
-                preexec_fn=_apply_resource_limits,
+                # No preexec_fn — not safe with threads. Resource limits are
+                # applied via prlimit(1) inside the bwrap command instead.
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            pass  # logs may be partial but still useful
+            pass  # partial logs are still useful
         finally:
             if seccomp_fd is not None:
                 try:
                     os.close(seccomp_fd)
                 except OSError:
                     pass
+
+        # Purge symlinks BEFORE returning the workdir to any caller.
+        # This prevents the sandbox from using the bind mount to plant
+        # symlinks that the parent would follow into host FS paths.
+        removed = _purge_symlinks(workdir)
+        if removed:
+            print(
+                f"[native-sandbox] WARNING: removed {len(removed)} symlink(s) "
+                f"planted by sandbox sandbox: {removed}",
+                file=sys.stderr,
+            )
 
         return f"native:{workdir}", workdir
 
@@ -172,19 +221,35 @@ class NativeSandbox:
         """
         Audit the sandbox workdir for unexpected writes.
 
-        The handler may write to /sandbox/logs/ — anything else is suspicious.
-        Returns a list of strings in the style of `docker diff` output.
+        Uses os.scandir() with follow_symlinks=False — never follows symlinks.
+        Any remaining symlinks (should be zero after _purge_symlinks) are
+        reported as anomalies.
         """
         allowed_prefixes = ("logs/",)
         anomalies: list[str] = []
         base = Path(workdir)
-        for p in base.rglob("*"):
-            if not p.is_file():
-                continue
-            rel = str(p.relative_to(base))
-            if not any(rel.startswith(prefix) for prefix in allowed_prefixes):
-                if rel != "input.txt":
-                    anomalies.append(f"C {rel}")
+        queue: list[Path] = [base]
+
+        while queue:
+            current = queue.pop()
+            try:
+                with os.scandir(current) as it:
+                    for entry in it:
+                        rel = str(Path(entry.path).relative_to(base))
+                        if entry.is_symlink():
+                            # Should have been purged — flag as critical anomaly
+                            target = os.readlink(entry.path)
+                            anomalies.append(f"S {rel} -> {target}")
+                        elif entry.is_dir(follow_symlinks=False):
+                            queue.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False):
+                            if rel != "input.txt" and not any(
+                                rel.startswith(p) for p in allowed_prefixes
+                            ):
+                                anomalies.append(f"C {rel}")
+            except (PermissionError, FileNotFoundError):
+                pass
+
         return anomalies
 
     def cleanup(self, workdir: str) -> None:
@@ -216,67 +281,76 @@ class NativeSandbox:
 
         # --- Mount structure ---
 
-        # Fresh disposable root
+        # Fresh disposable root (every byte is ephemeral)
         cmd += ["--tmpfs", "/"]
 
-        # Python + libraries (read-only, nosuid+nodev applied automatically by bwrap)
+        # Python + libraries (read-only; nosuid+nodev applied automatically by bwrap)
         cmd += ["--ro-bind", "/usr", "/usr"]
         cmd += _bind_or_symlink("/lib",   "/lib",   "usr/lib")
         cmd += _bind_or_symlink("/lib64", "/lib64", "usr/lib64")
         cmd += _bind_or_symlink("/bin",   "/bin",   "usr/bin")
         cmd += _bind_or_symlink("/sbin",  "/sbin",  "usr/sbin")
 
-        # Namespace-filtered proc (only shows sandbox PIDs)
+        # Namespace-filtered /proc (shows only sandbox PIDs)
         cmd += ["--proc", "/proc"]
 
-        # Minimal device set: /dev/null, /dev/urandom, /dev/zero, /dev/full,
-        # /dev/random, /dev/tty, /dev/pts — no block devices, no FUSE
+        # Minimal device set (/dev/null, /dev/urandom, /dev/zero, /dev/tty — no block devs)
         cmd += ["--dev", "/dev"]
 
-        # Ephemeral writable areas (discarded on exit)
+        # Ephemeral writable areas (vanish when sandbox exits)
         cmd += ["--tmpfs", "/tmp"]
         cmd += ["--tmpfs", "/run"]
         cmd += ["--tmpfs", "/home"]
 
-        # Handler script (read-only — attacker cannot modify it)
+        # Handler script (read-only — sandbox cannot modify it)
         cmd += ["--ro-bind", str(handler), "/sandbox/entrypoint.py"]
 
-        # Sandbox work area — bind to workdir so logs survive sandbox exit
+        # Workdir bind mount (writable — for logs/output; symlinks purged post-exit)
         cmd += ["--bind", workdir, "/sandbox"]
 
-        # Drop all capabilities (bwrap also sets NO_NEW_PRIVS internally)
+        # Drop all capabilities (bwrap also sets NO_NEW_PRIVS)
         cmd += ["--cap-drop", "ALL"]
 
         # seccomp filter
         if seccomp_fd is not None:
             cmd += ["--seccomp", str(seccomp_fd)]
 
+        # Resource limits via prlimit(1) — thread-safe, unlike preexec_fn.
+        # prlimit is in /usr/bin (bind-mounted via /usr).
+        if self._prlimit:
+            cmd += [
+                "prlimit",
+                "--nproc=64",                          # max child processes
+                f"--as={4 * 1024 * 1024 * 1024}",     # 4 GB virtual address space
+                "--cpu=600",                           # 10 min CPU time
+                "--nofile=1024",                       # max open file descriptors
+            ]
+
         cmd += ["python3", "/sandbox/entrypoint.py"]
         return cmd
 
     def _sandbox_env(self) -> dict[str, str]:
-        """Minimal, clean environment for the sandboxed process."""
+        """Minimal, clean environment — no host env vars leak into sandbox."""
         ollama_host = (
             self.model_url
             .replace("http://", "")
             .replace("https://", "")
         )
         return {
-            "HP_MODEL":      self.model,
-            "HP_MAX_TURNS":  str(self.max_turns),
-            "OLLAMA_HOST":   ollama_host,
-            "PATH":          "/usr/local/bin:/usr/bin:/bin",
-            "HOME":          "/tmp",
-            "LANG":          "C.UTF-8",
+            "HP_MODEL":     self.model,
+            "HP_MAX_TURNS": str(self.max_turns),
+            "OLLAMA_HOST":  ollama_host,
+            "PATH":         "/usr/local/bin:/usr/bin:/bin",
+            "HOME":         "/tmp",
+            "LANG":         "C.UTF-8",
         }
 
     def _make_seccomp_fd(self) -> Optional[int]:
-        """Build and return the seccomp filter fd, or None if it fails."""
+        """Build and return the seccomp filter fd, or None if unavailable."""
         try:
             from hot_potato.sandbox.seccomp_filter import write_filter_to_pipe
             return write_filter_to_pipe()
         except Exception as exc:
-            import sys
             print(
                 f"[native-sandbox] seccomp filter unavailable ({exc}); "
                 "running without — other isolation layers still active",

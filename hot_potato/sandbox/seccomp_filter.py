@@ -96,6 +96,10 @@ _BLOCKED: dict[str, int] = {
     "ioperm":              173,
     # vmsplice (pipe-to-arbitrary-mapping exploit primitive)
     "vmsplice":            278,
+    # memfd_create — anonymous in-memory file; combined with fexecve can run
+    # arbitrary binaries without any on-disk footprint, bypassing ro bind mounts.
+    # Confirmed exploitable in sandbox smoke test (syscall returned fd=3).
+    "memfd_create":        319,
     # Lookup own credentials in new namespace (helps prevent uid confusion attacks)
     "lookup_dcookie":      212,
 }
