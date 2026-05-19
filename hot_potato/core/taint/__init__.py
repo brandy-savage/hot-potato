@@ -61,9 +61,10 @@ class TaintedArtifact:
     ) -> "TaintedArtifact":
         """Create a new TaintedArtifact derived from this one, inheriting taint."""
         inherited = trust_level if trust_level is not None else self.trust_level
-        # Trust can never be upgraded through derivation past SEMI_TRUSTED
-        if self.trust_level < TrustLevel.TRUSTED:
-            inherited = min(inherited, TrustLevel.SEMI_TRUSTED)
+        # Trust is monotonically non-increasing: derived content can never exceed
+        # its source's trust level. The previous bound of SEMI_TRUSTED allowed
+        # UNTRUSTED → SEMI_TRUSTED laundering with a single keyword argument.
+        inherited = min(inherited, self.trust_level)
 
         derived = TaintedArtifact(
             content=new_content,

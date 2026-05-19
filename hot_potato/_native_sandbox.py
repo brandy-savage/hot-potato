@@ -346,17 +346,28 @@ class NativeSandbox:
         }
 
     def _make_seccomp_fd(self) -> Optional[int]:
-        """Build and return the seccomp filter fd, or None if unavailable."""
+        """
+        Build and return the seccomp filter fd.
+
+        Raises NativeSandboxError on failure unless HP_SECCOMP_OPTIONAL=1.
+        Fail-open is only acceptable in dev/test environments where you
+        explicitly know the filter won't load (e.g. no kernel BPF support).
+        """
         try:
             from hot_potato.sandbox.seccomp_filter import write_filter_to_pipe
             return write_filter_to_pipe()
         except Exception as exc:
-            print(
-                f"[native-sandbox] seccomp filter unavailable ({exc}); "
-                "running without — other isolation layers still active",
-                file=sys.stderr,
-            )
-            return None
+            if os.getenv("HP_SECCOMP_OPTIONAL") == "1":
+                print(
+                    f"[native-sandbox] WARNING: seccomp filter unavailable ({exc}); "
+                    "HP_SECCOMP_OPTIONAL=1 — proceeding without (dev/test only)",
+                    file=sys.stderr,
+                )
+                return None
+            raise NativeSandboxError(
+                f"seccomp filter failed to build: {exc}. "
+                "Set HP_SECCOMP_OPTIONAL=1 to run without (not recommended)."
+            ) from exc
 
 
 # ---------------------------------------------------------------------------

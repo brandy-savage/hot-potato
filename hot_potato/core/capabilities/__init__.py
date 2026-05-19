@@ -56,9 +56,14 @@ class CapabilityRequest:
 
     @property
     def effective_trust_level(self) -> TrustLevel:
-        """Worst-case trust among all tainted inputs."""
+        """Worst-case trust among all tainted inputs.
+
+        Returns UNTRUSTED when no inputs are provided. Returning TRUSTED here
+        was a firewall bypass: `allow_trusted` would fire on any tool call whose
+        caller forgot to pass tainted_inputs, silently allowing everything.
+        """
         if not self.tainted_inputs:
-            return TrustLevel.TRUSTED
+            return TrustLevel.UNTRUSTED
         return min(a.trust_level for a in self.tainted_inputs)
 
     @property

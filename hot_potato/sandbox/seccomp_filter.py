@@ -33,11 +33,16 @@ BPF_JEQ  = 0x10
 BPF_K    = 0x00
 BPF_RET  = 0x06
 
-SECCOMP_RET_ALLOW = 0x7FFF_0000
-SECCOMP_RET_ERRNO = 0x0005_0000  # base — OR with errno value
+SECCOMP_RET_ALLOW       = 0x7FFF_0000
+SECCOMP_RET_ERRNO       = 0x0005_0000  # base — OR with errno value
+SECCOMP_RET_KILL_THREAD = 0x0000_0000  # kill thread immediately (arch mismatch)
 EPERM = 1
 
-SECCOMP_DATA_NR_OFFSET = 0  # offset of syscall nr in seccomp_data
+SECCOMP_DATA_NR_OFFSET   = 0  # offset of syscall nr in seccomp_data
+SECCOMP_DATA_ARCH_OFFSET = 4  # offset of arch in seccomp_data
+
+# x86_64 audit architecture constant (AUDIT_ARCH_X86_64)
+AUDIT_ARCH_X86_64 = 0xC000_003E
 
 
 def _stmt(code: int, k: int) -> bytes:
@@ -69,6 +74,8 @@ _BLOCKED: dict[str, int] = {
     "mknod":               133,
     "mknodat":             259,
     # File handle open (Shocker-style container escape vector)
+    # name_to_handle_at is the first step — must block both halves of the pair
+    "name_to_handle_at":   303,
     "open_by_handle_at":   304,
     # Kernel keyring (key exfiltration / persistence)
     "keyctl":              250,
@@ -100,6 +107,14 @@ _BLOCKED: dict[str, int] = {
     # arbitrary binaries without any on-disk footprint, bypassing ro bind mounts.
     # Confirmed exploitable in sandbox smoke test (syscall returned fd=3).
     "memfd_create":        319,
+    # io_uring — widely used as sandbox escape primitive; blocks async I/O ring
+    "io_uring_setup":      425,
+    "io_uring_enter":      426,
+    "io_uring_register":   427,
+    # pidfd — cross-process fd manipulation without ptrace
+    "pidfd_open":          434,
+    "clone3":              435,  # clone3 can create user namespaces, bypasses unshare block
+    "pidfd_getfd":         438,
     # Lookup own credentials in new namespace (helps prevent uid confusion attacks)
     "lookup_dcookie":      212,
 }
@@ -109,11 +124,19 @@ def build_filter() -> bytes:
     """
     Return raw BPF bytecode (sequence of struct sock_filter, 8 bytes each)
     implementing:
+      - verify arch == AUDIT_ARCH_X86_64; kill thread immediately if not
       - load seccomp_data.nr (syscall number)
       - for each blocked syscall: if nr == X → return ERRNO(EPERM)
       - default: return ALLOW
     """
     insns: list[bytes] = []
+
+    # Arch check — MUST be first. Without this, a 32-bit process can call
+    # 32-bit syscalls whose numbers collide with allowed 64-bit syscalls.
+    # jt=1 means "arch matches, skip the KILL"; jf=0 means "fall through to KILL"
+    insns.append(_stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_ARCH_OFFSET))
+    insns.append(_jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0))
+    insns.append(_stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_THREAD))
 
     # Load the syscall number into accumulator
     insns.append(_stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_NR_OFFSET))

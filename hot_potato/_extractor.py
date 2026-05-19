@@ -688,19 +688,21 @@ def build_artifact(
 
     severity = _max_severity(sevs)
 
-    # Hallucination filter: if the AI called hot/critical tools but there is
-    # zero corroborating evidence in the content (no static signals, no model
-    # detections of injection language), the tool calls are likely spontaneous
-    # hallucination from an overly gullible model, not a real injection response.
-    # Downgrade to warm and flag so callers can decide how to handle it.
+    # Hallucination filter: flag when the sandbox recorded hot/critical tool
+    # calls but there is NO corroborating evidence (no static signals, no model
+    # commentary, no fs changes, and crucially — no logged tool call args).
+    # We do NOT downgrade severity: a sandbox finding of hot/critical is the
+    # ground truth; the static layer's silence may mean evasion, not safety.
+    # Previously this downgraded severity to "warm" — that inverted the defense:
+    # attacks designed to evade static detection (cat6, cat61, etc.) would have
+    # their sandbox evidence silently suppressed. Flag for review instead.
     suspected_hallucination = (
         _SEV_ORDER.index(severity) >= _SEV_ORDER.index("hot")
         and not content_signals
         and not detections
         and not fs_changes
     )
-    if suspected_hallucination:
-        severity = "warm"
+    # severity is unchanged — sandbox evidence stands regardless of static miss
 
     # hot_potato=True only when a genuine side-effecting or exfiltrating action
     # was attempted. warm = noteworthy but content is still safe to pass forward.
