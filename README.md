@@ -157,14 +157,69 @@ set_taint_context([artifact])
 guarded_tool = GuardedTool.wrap(my_langchain_tool)
 ```
 
+## Behavioral sandbox backends
+
+Hot-potato ships two behavioral sandbox backends. The static + firewall layers
+work without either.
+
+### Docker backend (default)
+
+```bash
+# One-time setup — pull model into named volume
+hot-potato-setup
+
+# Use (automatic when calling safe_fetch/scan_file with sandbox)
+HP_BACKEND=docker hot-potato file:///path/to/file.txt
+```
+
+Requires Docker daemon. Uses `--network none`, 2 GB memory cap, overlay FS.
+Startup: ~3–8 s.
+
+### Native backend (bwrap — no daemon required)
+
+```bash
+# One-time setup — install bubblewrap + AppArmor profile
+apt install bubblewrap
+sudo cp setup/apparmor_bwrap.profile /etc/apparmor.d/bwrap
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+
+# Use
+HP_BACKEND=native hot-potato file:///path/to/file.txt
+```
+
+Requires: `bwrap` (bubblewrap), Linux kernel 4.18+, Ollama running on localhost.
+Startup: ~200 ms.
+
+Isolation layers:
+
+| Layer | Docker | Native |
+|---|---|---|
+| Disposable FS | overlay2 | tmpfs root |
+| Process isolation | cgroup + namespace | PID + user namespace |
+| Network isolation | `--network none` | App-layer (fake handlers) |
+| Syscall filter | Docker default seccomp | Custom BPF (33 blocked) |
+| Capability drop | Docker defaults | `CAP_DROP ALL` + NO_NEW_PRIVS |
+| Root required | Yes (daemon) | No |
+
+See `docs/native_sandbox.md` for the full escape vector analysis covering
+symlink traversal, ptrace, SUID, fork bombs, netlink, and kernel exploits.
+
+```python
+from hot_potato import native_sandbox_available
+print(native_sandbox_available())  # True if bwrap is installed and userns enabled
+```
+
 ## Benchmarking
 
 ```bash
 # Fast (no Docker) — static + behavioral + firewall layers
 python3 benchmarks/run_benchmark.py
 
-# Full (includes Docker sandbox)
+# Full sandbox (Docker)
 python3 benchmarks/run_benchmark.py --sandbox --out results/bench.json
+
+# Full sandbox (native)
+HP_BACKEND=native python3 benchmarks/run_benchmark.py --sandbox --out results/bench_native.json
 ```
 
 Current result against 72 adversarial categories:
@@ -239,21 +294,30 @@ hot_potato/
     taint/        TaintedArtifact, TrustLevel, propagation
     policy/       PolicyEngine, YAML loader, PolicyOutcome
     capabilities/ CapabilityFirewall, CapabilityRequest
-    sandbox/      SandboxRunner (Docker wrapper)
   detectors/      StaticDetector, BehavioralDetector, DetectorPipeline
   trust_graph/    TrustGraph, TrustNode, TrustEdge
   replay/         ReplayEngine, ReplayCase, scoring
   telemetry/      TelemetrySession, structured audit log
   swarm/          ArtifactSwarm, concurrent batch screening
+  sandbox/
+    seccomp_filter.py   BPF syscall filter (33 blocked calls, no libseccomp dep)
+  _docker.py      Docker sandbox backend (default)
+  _native_sandbox.py   bwrap native sandbox backend (HP_BACKEND=native)
 integrations/
   openai_compat.py  GuardedToolExecutor
   mcp_guard.py      MCPGuard
   langchain_guard.py GuardedTool
 policies/
   default.yaml      12 default rules
+setup/
+  apparmor_bwrap.profile   AppArmor profile required on Ubuntu 24.04+
+docs/
+  native_sandbox.md   Escape vector analysis + Docker vs native comparison
 benchmarks/
   run_benchmark.py
 examples/
   adversarial/      72 attack categories (cat1–cat72)
   known_good/       Legitimate-but-suspicious files + FP analysis
+sandbox/
+  entrypoint.py     Handler script (runs inside both Docker and native sandbox)
 ```

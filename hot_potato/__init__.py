@@ -50,6 +50,12 @@ from ._docker import ensure_model_volume, docker_run, docker_cleanup, IMAGE, MOD
 from ._extractor import (
     parse_tool_log, parse_raw_log, check_filesystem, build_artifact, SCANNER_VERSION
 )
+from ._native_sandbox import (
+    native_run      as _run_native,
+    native_check_fs as _native_check_fs,
+    native_cleanup  as _native_cleanup,
+    native_sandbox_available,
+)
 
 __all__ = [
     # Screening API (backwards-compatible)
@@ -61,6 +67,8 @@ __all__ = [
     "HotPotatoResult",
     "HotPotatoError",
     "SCANNER_VERSION",
+    # Native sandbox
+    "native_sandbox_available",
     # Taint engine
     "TaintedArtifact",
     "TrustLevel",
@@ -188,23 +196,37 @@ def _sanitize_for_model(content: str) -> tuple[str, int]:
 
 
 def _run_sandbox(content: str, url: str) -> HotPotatoResult:
-    """Run sandbox, build artifact, return typed result."""
+    """Run sandbox, build artifact, return typed result.
+
+    Backend selection:
+      HP_BACKEND=docker  (default) — Docker container with --network none
+      HP_BACKEND=native            — bwrap + Linux namespaces, no daemon required
+    """
     from ._extractor import _SEV_ORDER
-    ensure_model_volume()
+
+    backend = os.getenv("HP_BACKEND", "docker").lower()
+
     # Pre-model chunk-and-redact: sanitise long content before it reaches the model.
-    # Short content is passed as-is (full-text static scan already covers it).
     sanitized, n_redacted = _sanitize_for_model(content)
     if n_redacted:
         print(f"[hot-potato] pre-model redacted {n_redacted} chunk(s) — "
               f"injection confined to static artifact", file=__import__('sys').stderr)
-    container_id, sandbox = docker_run(sanitized)
+
+    if backend == "native":
+        sandbox_id, sandbox = _run_native(sanitized)
+        _cleanup = _native_cleanup
+        _check_fs = _native_check_fs
+    else:
+        ensure_model_volume()
+        sandbox_id, sandbox = docker_run(sanitized)
+        _cleanup = docker_cleanup
+        _check_fs = check_filesystem
+
     try:
         calls      = parse_tool_log(Path(sandbox) / "logs" / "tool_calls.jsonl")
         detections = parse_raw_log(Path(sandbox) / "logs" / "raw_responses.jsonl")
-        fs_changes = check_filesystem(container_id)
+        fs_changes = _check_fs(sandbox_id)
         artifact   = build_artifact(calls, detections, fs_changes, content=content)
-        # Derive understood_injections from write_file calls to the understood_injection.txt path.
-        # (write_file is a fake handler — no disk write happens, so we read from tool_calls instead.)
         if artifact is not None:
             echoed = [
                 c["args"].get("content", "")
@@ -215,7 +237,7 @@ def _run_sandbox(content: str, url: str) -> HotPotatoResult:
             if echoed:
                 artifact["understood_injections"] = echoed
     finally:
-        docker_cleanup(container_id)
+        _cleanup(sandbox_id)
 
     if artifact is None:
         return HotPotatoResult(
@@ -247,7 +269,19 @@ def _run_sandbox(content: str, url: str) -> HotPotatoResult:
 # ---------------------------------------------------------------------------
 
 def setup() -> None:
-    """Pull the sandbox model into the named Docker volume. Needs network. Run once."""
+    """Pull the sandbox model into the named Docker volume. Needs network. Run once.
+
+    For the native backend (HP_BACKEND=native), model access goes through the
+    existing Ollama daemon on localhost — no extra setup step is needed.
+    """
+    if os.getenv("HP_BACKEND", "docker").lower() == "native":
+        from ._native_sandbox import NativeSandbox
+        if not NativeSandbox().available:
+            raise RuntimeError(
+                "Native sandbox unavailable: install bubblewrap (apt install bubblewrap)"
+            )
+        print("[hot-potato] native backend ready — using Ollama on localhost")
+        return
     ensure_model_volume()
 
 
