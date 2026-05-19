@@ -26,7 +26,7 @@ rules:
   - id: block_shell_from_untrusted
     description: Block shell execution when triggered by untrusted content
     match:
-      tools: ["bash_exec", "execute_code", "run_command", "shell", "subprocess"]
+      tools: ["bash_exec", "execute_code", "execute_shell", "run_command", "shell", "subprocess"]
       trust_levels: [UNTRUSTED, SEMI_TRUSTED]
     outcome: deny
     reason: "Shell execution from untrusted content is arbitrary code execution"
@@ -36,7 +36,7 @@ rules:
   - id: block_exfil_untrusted
     description: Block all outbound network from untrusted content
     match:
-      tools: ["send_http", "send_email", "post_webhook", "upload_file"]
+      tools: ["http_request", "send_http", "send_email", "post_webhook", "upload_file"]
       trust_levels: [UNTRUSTED]
     outcome: deny
     reason: "Outbound network from UNTRUSTED content is exfiltration"
@@ -44,7 +44,7 @@ rules:
   - id: block_exfil_signals
     description: Block network ops when injection signals are present
     match:
-      tools: ["send_http", "send_email", "post_webhook"]
+      tools: ["http_request", "send_http", "send_email", "post_webhook", "upload_file"]
       trust_levels: [UNTRUSTED, SEMI_TRUSTED]
       taint_tags: ["injection_signal"]
     outcome: deny
@@ -53,7 +53,7 @@ rules:
   - id: review_exfil_semi_trusted
     description: Require review for network ops from semi-trusted content
     match:
-      tools: ["send_http", "send_email"]
+      tools: ["http_request", "send_http", "send_email", "post_webhook", "upload_file"]
       trust_levels: [SEMI_TRUSTED]
     outcome: require_human_review
     reason: "Network ops from SEMI_TRUSTED content require human review"

@@ -12,13 +12,17 @@ _CACHE_FILE = Path(__file__).parent.parent / "cache" / "clean_hashes.json"
 _CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _cache_key(content: str) -> str:
+def _cache_key(content: str, url: str) -> str:
     """
-    Key is scoped to content + scanner version + model so that upgrading
-    the scanner or switching models automatically invalidates cached results.
+    Key is scoped to URL + content + scanner version + model.
+
+    URL must be included so that attacker.com cannot serve the same bytes as
+    a known-clean internal URL and get a cache hit (F14). Content is still
+    included so the key is unique per (url, content) pair, and scanner-version
+    scoping auto-invalidates on upgrades.
     """
     model = os.getenv("HP_MODEL", "qwen2.5:1.5b")
-    blob = f"{SCANNER_VERSION}:{model}:{content}"
+    blob = f"{SCANNER_VERSION}:{model}:{url}:{content}"
     return hashlib.sha256(blob.encode("utf-8", errors="replace")).hexdigest()
 
 
@@ -35,15 +39,15 @@ def _save(cache: dict) -> None:
     _CACHE_FILE.write_text(json.dumps(cache, indent=2))
 
 
-def is_confirmed_clean(content: str) -> bool:
-    """True iff this content has been confirmed clean >= CLEAN_THRESHOLD times."""
-    return _load().get(_cache_key(content), {}).get("clean_count", 0) >= _CLEAN_THRESHOLD
+def is_confirmed_clean(content: str, url: str) -> bool:
+    """True iff this (url, content) pair has been confirmed clean >= CLEAN_THRESHOLD times."""
+    return _load().get(_cache_key(content, url), {}).get("clean_count", 0) >= _CLEAN_THRESHOLD
 
 
 def record_clean(content: str, url: str) -> bool:
     """Increment clean count. Returns True once CLEAN_THRESHOLD is reached."""
     cache = _load()
-    key = _cache_key(content)
+    key = _cache_key(content, url)
     entry = cache.get(key, {"url": url, "clean_count": 0})
     entry["clean_count"] = entry.get("clean_count", 0) + 1
     entry["scanner_version"] = SCANNER_VERSION

@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -309,10 +310,14 @@ def safe_fetch(url: str, *, use_cache: bool | None = None) -> HotPotatoResult:
     if use_cache is None:
         use_cache = os.getenv("HP_CACHE", "0") == "1"
 
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"safe_fetch: only http/https URLs allowed, got scheme {parsed.scheme!r}")
+
     with urllib.request.urlopen(url, timeout=15) as resp:
         content = resp.read().decode("utf-8", errors="replace")
 
-    if use_cache and is_confirmed_clean(content):
+    if use_cache and is_confirmed_clean(content, url):
         return HotPotatoResult(
             clean=True, severity="cold", safe_content=content, artifact=None, _raw=content,
         )
@@ -355,7 +360,7 @@ def scan_file(path: str | Path, *, use_cache: bool | None = None) -> HotPotatoRe
     content = path.read_text(errors="replace")
     url_key = f"file://{path.resolve()}"
 
-    if use_cache and is_confirmed_clean(content):
+    if use_cache and is_confirmed_clean(content, url_key):
         return HotPotatoResult(
             clean=True, severity="cold", safe_content=content, artifact=None, _raw=content,
         )
