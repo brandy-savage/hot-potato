@@ -165,6 +165,13 @@ def _parse_rule(raw: dict[str, Any]) -> PolicyRule:
     if isinstance(trust_levels, str):
         trust_levels = [trust_levels]
     trust_levels = [str(t) for t in trust_levels]
+    _VALID_TRUST = {tl.name for tl in TrustLevel} | {"*"}
+    bad = [t for t in trust_levels if t not in _VALID_TRUST]
+    if bad:
+        raise ValueError(
+            f"Rule '{raw.get('id', '?')}': unknown trust_level(s) {bad}. "
+            f"Valid values: {sorted(_VALID_TRUST)}"
+        )
     outcome_str = raw.get("outcome", "deny")
     try:
         outcome = PolicyOutcome(outcome_str)

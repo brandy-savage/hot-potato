@@ -19,35 +19,39 @@ Policy: reading untrusted content is evidence collection.
         acting because of untrusted content is compromise.
 """
 # Bump this whenever detection logic changes — invalidates cached clean results.
-SCANNER_VERSION = "1.9.0"
+SCANNER_VERSION = "1.10.0"
 
 import json
 import re
 import subprocess
+import unicodedata
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Homoglyph normalisation — map common Unicode confusables to ASCII before
-# running regex-based detection.  Covers the most common attack chars:
-#   Cyrillic letters that look like Latin/Latin-ext lookalikes used in
-#   cat9-style obfuscation (ѕеnd_httр → send_http, ɡet_env → get_env).
+# Homoglyph normalisation — two-stage pipeline:
+#   1. NFKC Unicode normalisation: decomposes fullwidth ASCII, mathematical
+#      alphanumerics, superscript/subscript digits, presentation forms, and
+#      most other compatibility equivalents in one pass (~90% of gap per F22).
+#   2. Manual table for cases NFKC doesn't collapse: Cyrillic/Greek look-alikes
+#      that remain as distinct codepoints after NFKC (e.g. Cyrillic 'а' U+0430
+#      stays 'а', not 'a', because they are canonically distinct characters).
 # ---------------------------------------------------------------------------
 _HOMOGLYPH_MAP = str.maketrans({
-    # Cyrillic → ASCII
+    # Cyrillic → ASCII (NFKC does NOT collapse these — canonical distinct chars)
     'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'ѕ': 's',
     'і': 'i', 'ј': 'j', 'х': 'x', 'у': 'y', 'ԁ': 'd', 'ѵ': 'v',
     'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M', 'Н': 'H',
     'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X',
-    # Latin/IPA lookalikes
+    # Latin/IPA lookalikes not collapsed by NFKC
     'ɡ': 'g', 'ɑ': 'a', 'ꜱ': 's', 'ᴀ': 'a', 'ɪ': 'i', 'ᴇ': 'e',
-    # Greek
+    # Greek (canonical distinct from ASCII — NFKC does not collapse)
     'α': 'a', 'ε': 'e', 'ο': 'o', 'ν': 'v', 'ρ': 'p',
 })
 
 
 def _normalize_confusables(text: str) -> str:
-    """Translate known homoglyphs to ASCII for regex matching."""
-    return text.translate(_HOMOGLYPH_MAP)
+    """NFKC-normalise then apply manual homoglyph map for regex matching."""
+    return unicodedata.normalize("NFKC", text).translate(_HOMOGLYPH_MAP)
 
 
 # Zero-width and invisible Unicode characters used for steganographic injection.
@@ -429,22 +433,32 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
     import base64, codecs, binascii
     hits = []
 
-    # Base64 — find all base64-looking chunks (min 20 chars)
+    # Base64 (standard) — min 8 chars catches short single tool-name payloads.
+    # e.g. "send_http" → "c2VuZF9odHRw" (12 chars); old 20-char threshold missed these.
     # Also attempt a second decode pass (catches base64(base64(payload)))
-    for chunk in re.findall(r"[A-Za-z0-9+/]{20,}={0,2}", content):
+    for chunk in re.findall(r"[A-Za-z0-9+/]{8,}={0,2}", content):
         try:
             decoded = base64.b64decode(chunk + "==").decode("utf-8", errors="ignore")
             if _DETECTION_SIGNALS.search(decoded) or _ALL_TOOLS.search(decoded) or _ALL_TOOLS_BARE.search(decoded):
                 hits.append(("base64", decoded[:200]))
             else:
                 # Second pass — decoded might itself be base64
-                for inner in re.findall(r"[A-Za-z0-9+/]{20,}={0,2}", decoded):
+                for inner in re.findall(r"[A-Za-z0-9+/]{8,}={0,2}", decoded):
                     try:
                         decoded2 = base64.b64decode(inner + "==").decode("utf-8", errors="ignore")
                         if _DETECTION_SIGNALS.search(decoded2) or _ALL_TOOLS.search(decoded2) or _ALL_TOOLS_BARE.search(decoded2):
                             hits.append(("base64x2", decoded2[:200]))
                     except Exception:
                         pass
+        except Exception:
+            pass
+
+    # Base64 URL-safe (no +/, uses -_) — same min-length threshold
+    for chunk in re.findall(r"[A-Za-z0-9\-_]{8,}", content):
+        try:
+            decoded = base64.urlsafe_b64decode(chunk + "==").decode("utf-8", errors="ignore")
+            if _DETECTION_SIGNALS.search(decoded) or _ALL_TOOLS.search(decoded) or _ALL_TOOLS_BARE.search(decoded):
+                hits.append(("base64url", decoded[:200]))
         except Exception:
             pass
 
