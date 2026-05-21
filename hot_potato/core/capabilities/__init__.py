@@ -31,6 +31,7 @@ from typing import Any
 
 from hot_potato.core.taint import TaintedArtifact, TrustLevel
 from hot_potato.core.policy import PolicyEngine, PolicyDecision, PolicyOutcome
+from hot_potato.core.url_provenance import UrlProvenance, analyze_url_params
 
 log = logging.getLogger("hot_potato.capabilities")
 
@@ -47,12 +48,27 @@ class CapabilityDenied(Exception):
 
 @dataclass
 class CapabilityRequest:
-    """Represents a model's intent to invoke a tool."""
+    """Represents a model's intent to invoke a tool.
+
+    url_provenance controls how the firewall treats URLs in args:
+      - AI_GENERATED (default, fail-safe): the model constructed this URL —
+        query parameters are inspected for exfiltration signals even when the
+        base domain looks trusted.
+      - HARDCODED: the operator baked this URL into their code — params are
+        not inspected; the operator is responsible for their own URLs.
+      - UNTRUSTED_CONTENT: URL came from a scraped page or untrusted document —
+        treated as most hostile; params always inspected.
+
+    This closes the URL-parameter laundering attack: a model trained or
+    prompted to emit  https://legit.com/api?d=<exfil>  can exfiltrate data
+    even when the base domain is whitelisted, unless param taint is checked.
+    """
     tool_name: str
     args: dict[str, Any]
     tainted_inputs: list[TaintedArtifact] = field(default_factory=list)
     requesting_model: str = "unknown"
     metadata: dict[str, Any] = field(default_factory=dict)
+    url_provenance: UrlProvenance = UrlProvenance.AI_GENERATED
 
     @property
     def effective_trust_level(self) -> TrustLevel:
@@ -68,9 +84,20 @@ class CapabilityRequest:
 
     @property
     def effective_taint_tags(self) -> set[str]:
+        """Combine artifact taint tags with URL provenance signals.
+
+        URL param analysis runs here so the policy engine sees url_param_tainted
+        without the caller needing to do anything extra.
+        """
         tags: set[str] = set()
         for artifact in self.tainted_inputs:
             tags |= artifact.taint_tags
+        # Inject URL provenance tags — checks even when base domain is trusted
+        tags |= analyze_url_params(
+            self.args,
+            self.url_provenance,
+            self.tainted_inputs,
+        )
         return tags
 
 

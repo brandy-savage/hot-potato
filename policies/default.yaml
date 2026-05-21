@@ -50,6 +50,31 @@ rules:
     outcome: deny
     reason: "Injection signals detected; blocking outbound network call"
 
+  # ── URL parameter laundering ─────────────────────────────────────────────
+  # Closes the attack: model trained/prompted to emit
+  #   https://trusted-domain.com/api?d=<exfil>
+  # The base domain looks fine but GET params carry stolen data.
+  # Applies even when effective_trust_level is TRUSTED because the URL
+  # was AI-generated — the model's "memory" is not a trusted source.
+
+  - id: block_url_param_exfil_fragment
+    description: Block outbound when URL params contain verbatim tainted content
+    match:
+      tools: ["http_request", "send_http", "post_webhook", "upload_file"]
+      trust_levels: ["*"]
+      taint_tags: ["url_param_taint_fragment"]
+    outcome: deny
+    reason: "URL query parameters contain content from tainted inputs — likely exfiltration via GET params"
+
+  - id: review_ai_url_param_tainted
+    description: Require review for AI-generated URLs with suspicious params
+    match:
+      tools: ["http_request", "send_http", "post_webhook", "upload_file"]
+      trust_levels: ["*"]
+      taint_tags: ["url_param_tainted", "url_ai_generated"]
+    outcome: require_human_review
+    reason: "AI-generated URL has query parameters that look like encoded payload — possible training-data-poisoned C2 call"
+
   - id: review_exfil_semi_trusted
     description: Require review for network ops from semi-trusted content
     match:
