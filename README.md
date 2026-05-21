@@ -222,16 +222,31 @@ python3 benchmarks/run_benchmark.py --sandbox --out results/bench.json
 HP_BACKEND=native python3 benchmarks/run_benchmark.py --sandbox --out results/bench_native.json
 ```
 
-Current result against 73 adversarial categories:
+Results against 73 adversarial categories (SCANNER_VERSION 1.10.0):
 
 | Layer | Detection rate | Notes |
 |---|---|---|
-| Static (regex) | 98.6% | cat6 intentionally signal-free (hallucination test — sandbox only) |
+| Static (regex) | 98.6% (72/73) | cat6 intentionally signal-free — requires sandbox |
 | Behavioral | — (Phase 2) | |
-| Capability firewall | 100% | |
-| Evasion rate | 0% | |
+| Capability firewall | policy-complete | All defined rules fire correctly; coverage depends on your policy |
 
-False positive rate on legitimate skill files: **~9%** (SCANNER_VERSION 1.10.0, 630 skills scanned from skills.sh — FPs are all code examples with `<script>` tags or `{{template}}` syntax, correctly handled by assigning `TrustLevel.TRUSTED` to known-good registries)
+> **This is not a panacea.** These numbers reflect a fixed adversarial corpus designed by the same team that built the scanner. Real-world evasion rates are unknown and will differ. Adversaries who study the open-source detector will find gaps. The behavioral sandbox (Phase 2) and regular corpus updates are how we close them over time.
+
+## Head-to-head vs other tools
+
+Same 73-category corpus, same known-good files ([full results](benchmarks/results/head_to_head.md)):
+
+| Tool | Detection rate | Critical FNs | FPs (known-good docs) | Avg latency |
+|---|---|---|---|---|
+| **hot-potato-static** | **98.6% (72/73)** | **0** | 5/5 ¹ | 35 ms |
+| llm-guard-v2 | 13.7% (10/73) | 62 | 0/5 | 73 ms |
+| rebuff-heuristic | 0.0% (0/73) | 72 | 0/5 | 87,745 ms |
+
+¹ hot-potato FPs on the 5 known-good files are security documents that naturally contain injection vocabulary (IR playbooks, API references, etc.). This is expected and correct — assign `TrustLevel.TRUSTED` for first-party content. See [Known limitations](#known-limitations).
+
+> **Note on rebuff**: heuristic mode only (no API key). The 87s average latency is a product of its O(n²) keyword-combination matching. Detection rate of 0% reflects that it only recognises "Ignore previous instructions" variants; all encoding, obfuscation, and indirect injection categories are blind spots.
+
+False positive rate on legitimate skill files: **~9%** (630 skills scanned from skills.sh — FPs are code examples with `<script>` tags or `{{template}}` syntax, handled correctly by assigning `TrustLevel.TRUSTED` to known-good registries)
 
 Real injection rate in the wild: **1/630** (`roin-orca/skills/simple` — anti-scanner meta-injection + XSS payload in YAML frontmatter, see `examples/adversarial/cat73`)
 
