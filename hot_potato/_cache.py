@@ -57,10 +57,10 @@ def record_clean(content: str, url: str) -> bool:
     return entry["clean_count"] >= _CLEAN_THRESHOLD
 
 
-def evict(content: str) -> None:
-    """Remove a content hash from the cache (called when a hot potato is found)."""
+def evict(content: str, url: str) -> None:
+    """Remove a (url, content) pair from the cache (called when a hot potato is found)."""
     cache = _load()
-    key = _cache_key(content)
+    key = _cache_key(content, url)
     if key in cache:
         del cache[key]
         _save(cache)

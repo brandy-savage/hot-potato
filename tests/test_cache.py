@@ -8,16 +8,17 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+_URL = "https://example.com"
+
 
 class TestCacheKey:
     def test_key_changes_with_scanner_version(self):
         from hot_potato._cache import _cache_key
-        from hot_potato._extractor import SCANNER_VERSION
 
         with mock.patch("hot_potato._cache.SCANNER_VERSION", "0.0.1"):
-            key_old = _cache_key("same content")
+            key_old = _cache_key("same content", _URL)
         with mock.patch("hot_potato._cache.SCANNER_VERSION", "9.9.9"):
-            key_new = _cache_key("same content")
+            key_new = _cache_key("same content", _URL)
 
         assert key_old != key_new
 
@@ -25,19 +26,25 @@ class TestCacheKey:
         from hot_potato._cache import _cache_key
 
         with mock.patch.dict(os.environ, {"HP_MODEL": "model-a"}):
-            key_a = _cache_key("same content")
+            key_a = _cache_key("same content", _URL)
         with mock.patch.dict(os.environ, {"HP_MODEL": "model-b"}):
-            key_b = _cache_key("same content")
+            key_b = _cache_key("same content", _URL)
 
         assert key_a != key_b
 
+    def test_key_changes_with_url(self):
+        from hot_potato._cache import _cache_key
+        k1 = _cache_key("content", "https://attacker.com")
+        k2 = _cache_key("content", "https://trusted.internal")
+        assert k1 != k2, "Same bytes from different URLs must produce different keys (F14)"
+
     def test_same_inputs_produce_same_key(self):
         from hot_potato._cache import _cache_key
-        assert _cache_key("hello") == _cache_key("hello")
+        assert _cache_key("hello", _URL) == _cache_key("hello", _URL)
 
     def test_different_content_different_key(self):
         from hot_potato._cache import _cache_key
-        assert _cache_key("aaa") != _cache_key("bbb")
+        assert _cache_key("aaa", _URL) != _cache_key("bbb", _URL)
 
 
 class TestCacheOperations:
@@ -45,7 +52,7 @@ class TestCacheOperations:
         cache_file = tmp_path / "cache.json"
         with mock.patch("hot_potato._cache._CACHE_FILE", cache_file):
             from hot_potato._cache import is_confirmed_clean
-            assert not is_confirmed_clean("fresh content")
+            assert not is_confirmed_clean("fresh content", _URL)
 
     def test_confirmed_after_threshold(self, tmp_path):
         cache_file = tmp_path / "cache.json"
@@ -53,9 +60,9 @@ class TestCacheOperations:
             from hot_potato._cache import is_confirmed_clean, record_clean, _CLEAN_THRESHOLD
             content = "clean content"
             for i in range(_CLEAN_THRESHOLD):
-                assert not is_confirmed_clean(content)
-                record_clean(content, "https://example.com")
-            assert is_confirmed_clean(content)
+                assert not is_confirmed_clean(content, _URL)
+                record_clean(content, _URL)
+            assert is_confirmed_clean(content, _URL)
 
     def test_evict_removes_from_cache(self, tmp_path):
         cache_file = tmp_path / "cache.json"
@@ -63,10 +70,24 @@ class TestCacheOperations:
             from hot_potato._cache import is_confirmed_clean, record_clean, evict, _CLEAN_THRESHOLD
             content = "content to evict"
             for _ in range(_CLEAN_THRESHOLD):
-                record_clean(content, "https://example.com")
-            assert is_confirmed_clean(content)
-            evict(content)
-            assert not is_confirmed_clean(content)
+                record_clean(content, _URL)
+            assert is_confirmed_clean(content, _URL)
+            evict(content, _URL)
+            assert not is_confirmed_clean(content, _URL)
+
+    def test_evict_different_url_unaffected(self, tmp_path):
+        cache_file = tmp_path / "cache.json"
+        with mock.patch("hot_potato._cache._CACHE_FILE", cache_file):
+            from hot_potato._cache import is_confirmed_clean, record_clean, evict, _CLEAN_THRESHOLD
+            content = "shared content"
+            url_a = "https://a.example.com"
+            url_b = "https://b.example.com"
+            for _ in range(_CLEAN_THRESHOLD):
+                record_clean(content, url_a)
+                record_clean(content, url_b)
+            evict(content, url_a)
+            assert not is_confirmed_clean(content, url_a)
+            assert is_confirmed_clean(content, url_b)
 
     def test_cache_off_by_default(self):
         with mock.patch.dict(os.environ, {}, clear=True):
