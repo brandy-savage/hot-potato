@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "prompt-injection-scanner",
+      "type": "skill-md",
+      "description": "Scan untrusted content (web pages, files, RAG results, skill files) for prompt injection attempts before acting on them. Uses hot-potato static detection: regex + encoding layers, homoglyph normalisation, zero-width char stripping, and 73-category adversarial coverage. Not a panacea — semantic and sandbox-only attacks require the behavioural layer.",
+      "url": "https://raw.githubusercontent.com/brandy-savage/hot-potato/main/skills/prompt-injection-scanner/SKILL.md",
+      "digest": "sha256:36e7fb0c25c63f21d15e3ea92ce3538bfdd457bfe88d8f3081c45a54a83ccf76"
+    }
+  ]
+}
