@@ -237,13 +237,15 @@ STATE_FILE = Path("skills_deep_scan_state.jsonl")
 REPORT_FILE = Path("skills_deep_scan_report.json")
 
 
-def load_seen() -> set[str]:
+def load_seen(skip_failures: bool = False) -> set[str]:
     if not STATE_FILE.exists():
         return set()
     seen = set()
     for line in STATE_FILE.read_text().splitlines():
         try:
             r = json.loads(line)
+            if skip_failures and r.get("status") == "fetch_failed":
+                continue  # retry failures on next run
             seen.add(f"{r['owner']}/{r['repo']}/{r['skill']}")
         except Exception:
             pass
@@ -347,6 +349,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=10000)
     ap.add_argument("--workers", type=int, default=30)
     ap.add_argument("--resume", action="store_true", help="Skip already-seen skills")
+    ap.add_argument("--retry-failed", action="store_true", help="Re-scan skills that previously failed to fetch")
     ap.add_argument("--report", action="store_true", help="Just print report from state file")
     ap.add_argument("--fresh", action="store_true", help="Ignore state file, start fresh")
     args = ap.parse_args()
@@ -368,9 +371,10 @@ def main() -> None:
         STATE_FILE.unlink()
         print("  Cleared state file")
 
-    seen = load_seen() if args.resume else set()
+    skip_failures = args.resume and not args.retry_failed
+    seen = load_seen(skip_failures=not args.retry_failed) if args.resume else set()
     print(f"hot-potato v{SCANNER_VERSION} — deep scan of skills.sh")
-    print(f"  state_file={STATE_FILE}  resume={args.resume}  seen={len(seen)}")
+    print(f"  state_file={STATE_FILE}  resume={args.resume}  retry_failed={args.retry_failed}  seen={len(seen)}")
 
     all_urls = fetch_all_skill_urls(args.limit + len(seen))
     pending = [(o, r, s) for o, r, s in all_urls
