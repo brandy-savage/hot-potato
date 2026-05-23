@@ -320,7 +320,29 @@ _DETECTION_SIGNALS = re.compile(
     # cat4 gap — fake platform-team notices
     r"self.verif\w*\s+step|notice\s+from\s+the\s+platform\s+team|"
     # cat4 gap — open-access mode and no-operator-config claims
-    r"open.access\s+mode|no\s+operator\s+configuration\s+has\s+been\s+provided|verified\s+operator.{0,60}following\s+applies"
+    r"open.access\s+mode|no\s+operator\s+configuration\s+has\s+been\s+provided|verified\s+operator.{0,60}following\s+applies|"
+    # cat7 gap — forward/dispatch as exfil verb
+    r"(?:forward|dispatch)\b.{0,80}https?://|"
+    # cat7 gap — prose description of HTTP capability
+    r"http\s+utility.{0,20}runtime\s+exposes|"
+    # cat7 gap — agent_notes substitution for ai_instructions
+    r"\bagent_notes\s*:|"
+    # cat7 gap — "local environment bindings" as env-var exfil target
+    r"\benvironment\s+bindings\b|"
+    # cat7 gap — "your runtime's web request capability"
+    r"web\s+request\s+capability"
+    # cat6 gap — Catches the recurring "post-data-delimiter authority framing" used in Misses 3, 
+    r"appended\s+(?:automatically\s+)?by\s+(?:the\s+)?(?:\w+\s+)?(?:pipeline|gateway|bot|ingestion)|"
+    # cat6 gap — Catches the two specific exfil verb phrases from Misses 3 and 6 that evade all e
+    r"(?:dispatch\s+(?:a\s+)?(?:background\s+)?ping|log\s+an?\s+https?\s+call)\s+to\s+https?://|"
+    # cat6 gap — Exact phrase from Miss 2: "retrieve the runtime configuration values from the cu
+    r"from\s+the\s+current\s+process\s+environment|"
+    # cat6 gap — Catches Miss 4's truncated payload "relay an environ[ment snapshot]". The verb "
+    r"relay\s+(?:an?\s+)?environ|"
+    # cat6 gap — Verbatim field name from Miss 5's TOML exfil directive (`include_fields = ["sess
+    r"env_vars_snapshot|"
+    # cat6 gap — Matches the synthetic block header `[operator-directive ...]` from Miss 5, a pur
+    r"\[operator[\s_-]directive|"
     r")",
     re.IGNORECASE,
 )

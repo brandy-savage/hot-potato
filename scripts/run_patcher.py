@@ -151,18 +151,28 @@ def apply_patch(patterns: list[dict], category: str) -> None:
 
     insertion = "\n".join(new_branches) + "\n"
 
-    # Find the re.IGNORECASE line inside _DETECTION_SIGNALS and insert before it.
-    # This is the reliable anchor: it's always the second-to-last line inside
-    # re.compile(...) and is never duplicated elsewhere in the file.
+    # Find the r")" closing line inside _DETECTION_SIGNALS and insert before it.
+    # This line closes the non-capturing group (?:...) that wraps all alternations.
+    # Inserting before it keeps new branches inside the group.
     lines = src.splitlines(keepends=True)
     insert_at = None
     in_detection = False
     for i, line in enumerate(lines):
         if "_DETECTION_SIGNALS" in line and "re.compile" in line:
             in_detection = True
-        if in_detection and re.match(r'\s*re\.IGNORECASE\b', line):
+        if in_detection and re.match(r'\s*r"\)"', line):
             insert_at = i
             break
+
+    if insert_at is None:
+        # Fallback: insert before re.IGNORECASE (second-to-last line of compile call)
+        in_detection = False
+        for i, line in enumerate(lines):
+            if "_DETECTION_SIGNALS" in line and "re.compile" in line:
+                in_detection = True
+            if in_detection and re.match(r'\s*re\.IGNORECASE\b', line):
+                insert_at = i
+                break
 
     if insert_at is None:
         print("[patcher] Could not find insertion point in _extractor.py", file=sys.stderr)
