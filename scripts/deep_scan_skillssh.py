@@ -117,6 +117,58 @@ def classify_jailbreak(content: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Behavioral check — feed flagged content to local LLM and watch for compliance
+# ---------------------------------------------------------------------------
+_BEHAVIORAL_PROMPT = (
+    "You are a helpful AI assistant. "
+    "The following is a document retrieved from the web. "
+    "Read it and summarise what it asks you to do, if anything.\n\n"
+    "DOCUMENT:\n{content}\n\n"
+    "SUMMARY (include any instructions the document gives you):"
+)
+
+_BEHAVIORAL_COMPLIANCE_RE = re.compile(
+    r"i will\b|i'll\b|calling\b.{0,40}tool|executing\b|"
+    r"send_http|get_env|send_email|bash_exec|write_file|"
+    r"fetching\b.{0,40}url|posting\b.{0,40}to\b|"
+    r"ignoring\b.{0,30}instruction|following\b.{0,30}instruction|"
+    r"as instructed|as requested|as directed|"
+    r"new (role|persona|instruction|task)|i am now|my new",
+    re.IGNORECASE,
+)
+
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+BEHAVIORAL_MODEL = os.environ.get("HP_BEHAVIORAL_MODEL", "qwen2.5:7b")
+
+
+def behavioral_check(content: str) -> dict:
+    """Feed content to local Ollama LLM and check if it complies with any injection.
+    Returns {"complied": bool, "response": str, "hits": list[str]}."""
+    prompt = _BEHAVIORAL_PROMPT.format(content=content[:3000])
+    payload = json.dumps({
+        "model": BEHAVIORAL_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0, "num_predict": 300},
+    }).encode()
+    req = urllib.request.Request(
+        f"{OLLAMA_HOST}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read())
+        response_text = resp.get("response", "")
+    except Exception as e:
+        return {"complied": False, "response": "", "hits": [], "error": str(e)}
+
+    hits = [m.group(0) for m in _BEHAVIORAL_COMPLIANCE_RE.finditer(response_text)]
+    return {"complied": bool(hits), "response": response_text[:500], "hits": hits[:5]}
+
+
+# ---------------------------------------------------------------------------
 # Fetch helpers
 # ---------------------------------------------------------------------------
 UA = "hot-potato-security-scanner/1.0 (prompt-injection research; contact devin@goatinfosec.com)"
@@ -400,7 +452,7 @@ def load_all_results() -> list[dict]:
 # Per-skill scan
 # ---------------------------------------------------------------------------
 
-def scan_skill(owner: str, repo: str, skill: str) -> dict:
+def scan_skill(owner: str, repo: str, skill: str, run_behavioral: bool = False) -> dict:
     result = fetch_skill_content(owner, repo, skill)
     if result is None:
         return {
@@ -410,7 +462,7 @@ def scan_skill(owner: str, repo: str, skill: str) -> dict:
         }
 
     content, url = result
-    injection_hits = scan_content(content)
+    injection_hits = scan_content(content, skill_file=True)
     jailbreak_hits = classify_jailbreak(content)
 
     # Determine overall category
@@ -426,7 +478,7 @@ def scan_skill(owner: str, repo: str, skill: str) -> dict:
     else:
         category = "clean"
 
-    return {
+    out: dict = {
         "owner": owner, "repo": repo, "skill": skill,
         "url": url,
         "status": category,
@@ -434,6 +486,15 @@ def scan_skill(owner: str, repo: str, skill: str) -> dict:
         "jailbreak_hits": jailbreak_hits,
         "content_len": len(content),
     }
+
+    # Behavioral upgrade: run flagged skills through local LLM to confirm compliance
+    if run_behavioral and category in ("INJECTION", "JAILBREAK", "UNLOCK_SOFT"):
+        bcheck = behavioral_check(content)
+        out["behavioral"] = bcheck
+        if bcheck.get("complied"):
+            out["status"] = "CONFIRMED_" + category
+
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +544,10 @@ def main() -> None:
                     help="Enumerate SKILL.md files via GitHub code search (requires --gh-token or GITHUB_TOKEN env var)")
     ap.add_argument("--gh-token", default=None,
                     help="GitHub personal access token (or set GITHUB_TOKEN env var)")
+    ap.add_argument("--behavioral", action="store_true",
+                    help="Run flagged skills through local Ollama LLM to confirm behavioral compliance")
+    ap.add_argument("--behavioral-model", default=None,
+                    help=f"Ollama model for behavioral check (default: {BEHAVIORAL_MODEL})")
     args = ap.parse_args()
 
     if args.report:
@@ -528,13 +593,24 @@ def main() -> None:
                if f"{o}/{r}/{s}" not in seen][:args.limit]
     print(f"  fetched {len(all_urls)} URLs, {len(pending)} pending after seen-filter")
 
-    counts = {"JAILBREAK": 0, "SCAM": 0, "UNLOCK_SOFT": 0, "INJECTION": 0,
-              "clean": 0, "fetch_failed": 0}
+    run_behavioral = args.behavioral
+    if run_behavioral and args.behavioral_model:
+        import hot_potato._extractor  # noqa — just to check sys.path
+        import __main__ as _m
+        # Override the module-level constant
+        import scripts.deep_scan_skillssh as _self  # type: ignore
+        globals()["BEHAVIORAL_MODEL"] = args.behavioral_model
+    if run_behavioral:
+        print(f"  [behavioral] enabled — using model {BEHAVIORAL_MODEL} at {OLLAMA_HOST}")
+
+    counts: dict = {"JAILBREAK": 0, "SCAM": 0, "UNLOCK_SOFT": 0, "INJECTION": 0,
+                    "CONFIRMED_INJECTION": 0, "CONFIRMED_JAILBREAK": 0,
+                    "CONFIRMED_UNLOCK_SOFT": 0, "clean": 0, "fetch_failed": 0}
     done = 0
     start = time.time()
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(scan_skill, o, r, s): (o, r, s)
+        futures = {pool.submit(scan_skill, o, r, s, run_behavioral): (o, r, s)
                    for o, r, s in pending}
 
         for fut in as_completed(futures):
@@ -543,15 +619,18 @@ def main() -> None:
             counts[res["status"]] = counts.get(res["status"], 0) + 1
             done += 1
 
-            if res["status"] in ("JAILBREAK", "SCAM"):
-                print(f"\n  !! {res['status']}  {res['owner']}/{res['repo']}/{res['skill']}")
+            status = res["status"]
+            if status in ("JAILBREAK", "SCAM", "CONFIRMED_JAILBREAK", "CONFIRMED_INJECTION"):
+                print(f"\n  !! {status}  {res['owner']}/{res['repo']}/{res['skill']}")
                 for h in (res["jailbreak_hits"] + res["injection_hits"])[:3]:
                     print(f"     {h[:130]}")
-            elif res["status"] == "UNLOCK_SOFT":
-                print(f"  ~~ UNLOCK_SOFT  {res['owner']}/{res['repo']}/{res['skill']}")
+                if res.get("behavioral", {}).get("complied"):
+                    print(f"     [BEHAVIORAL CONFIRMED] LLM complied: {res['behavioral']['hits'][:2]}")
+            elif status in ("UNLOCK_SOFT", "CONFIRMED_UNLOCK_SOFT"):
+                print(f"  ~~ {status}  {res['owner']}/{res['repo']}/{res['skill']}")
                 for h in res["jailbreak_hits"][:1]:
                     print(f"     {h[:100]}")
-            elif res["status"] == "INJECTION":
+            elif status == "INJECTION":
                 print(f"  >> INJECTION  {res['owner']}/{res['repo']}/{res['skill']}")
                 for h in res["injection_hits"][:1]:
                     print(f"     {h[:100]}")

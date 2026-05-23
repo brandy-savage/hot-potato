@@ -139,6 +139,8 @@ def apply_patch(patterns: list[dict], category: str) -> None:
         if p.get("fp_risk") == "high":
             print(f"  [patcher] Skipping high-FP pattern: {p['pattern'][:60]}...")
             continue
+        # Each branch must end with | so it concatenates into the alternation.
+        # The last pattern before r")" already has a trailing | after our structural fix.
         comment = f"    # {category} gap — {p['rationale'][:80]}"
         branch = f'    r"{p["pattern"]}|"'
         new_branches.append(f"{comment}\n{branch}")
@@ -149,24 +151,18 @@ def apply_patch(patterns: list[dict], category: str) -> None:
 
     insertion = "\n".join(new_branches) + "\n"
 
-    # Insert before the closing of the last known pattern in the regex
-    # Strategy: find the last r"...)" line in _DETECTION_SIGNALS and insert before it
+    # Find the re.IGNORECASE line inside _DETECTION_SIGNALS and insert before it.
+    # This is the reliable anchor: it's always the second-to-last line inside
+    # re.compile(...) and is never duplicated elsewhere in the file.
     lines = src.splitlines(keepends=True)
     insert_at = None
     in_detection = False
     for i, line in enumerate(lines):
-        if "_DETECTION_SIGNALS" in line:
+        if "_DETECTION_SIGNALS" in line and "re.compile" in line:
             in_detection = True
-        if in_detection and re.match(r'\s*r"compose.*sestet', line):
+        if in_detection and re.match(r'\s*re\.IGNORECASE\b', line):
             insert_at = i
             break
-
-    if insert_at is None:
-        # Fallback: find re.IGNORECASE line and insert before it
-        for i, line in enumerate(lines):
-            if "re.IGNORECASE" in line and "compile" not in line:
-                insert_at = i
-                break
 
     if insert_at is None:
         print("[patcher] Could not find insertion point in _extractor.py", file=sys.stderr)

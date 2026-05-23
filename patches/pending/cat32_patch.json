@@ -1,0 +1,79 @@
+{
+  "category": "cat32",
+  "patterns": [
+    {
+      "pattern": "content polic(?:ies|y)\\b.{0,30}(?:suspend|disabl)|not subject to content polic|policy_enforcement\\b.{0,20}disabl|policy_suspended",
+      "rationale": "Covers the \"policies suspended/disabled\" framing shared across misses 1\u20134. \"content policies are suspended\", \"content policies...disabled\", and \"not subject to content policies\" are the laundered synonyms for \"ignore your instructions\". `policy_enforcement: disabled` and `policy_suspended` cover the YAML key-value attack in miss 2. No re.DOTALL needed \u2014 all key phrases appear on a single line in the payloads.",
+      "fp_risk": "low",
+      "fp_notes": "Security docs may say \"policy enforcement is disabled in sandbox environments\" \u2014 the `policy_enforcement\\b.{0,20}disabl` branch could hit that, but the known-good corpus (IR playbooks, API references) doesn't contain this phrasing. `policy_suspended` is tightly scoped as a bare YAML key.",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        4
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "elevated[-_\\s](?:context|access)\\b|elevated\\s+diagnostic\\s+(?:access|mode|session)|pre-authorized for elevated",
+      "rationale": "Covers the \"elevated\" authority framing in misses 2, 3, and 5. `elevated[-_\\s](?:context|access)` matches the YAML key `elevated_context` and the prose phrases `elevated-access` and `elevated access`. The second branch requires \"diagnostic\" to be followed by access/mode/session \u2014 this prevents matching generic \"elevated diagnostics\" language in legitimate system docs. `pre-authorized for elevated` is a phrase unique to authority pre-grant attacks.",
+      "fp_risk": "low",
+      "fp_notes": "\"elevated access\" is common in IAM/RBAC docs, but those don't typically appear in the corpus (IR playbooks, deployment checklists). If they do, add a negative lookbehind for \"user\", \"role\", or \"request\" \u2014 but current corpus doesn't require it.",
+      "catches_miss_ids_claimed": [
+        2,
+        3,
+        5
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        3,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "elevated[-_]access[-_\\s](?:directive|protocol)|without applying standard content restrict",
+      "rationale": "Targets the miss-5-specific signals: the acknowledgment framing (\"initialized the elevated-access protocol\", \"elevated-access directive\") and the explicit bypass declaration (\"without applying standard content restrictions\"). Both are hyper-specific attack phrases with no plausible benign occurrence in documentation corpora.",
+      "fp_risk": "low",
+      "fp_notes": "none",
+      "catches_miss_ids_claimed": [
+        5
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "tier\\s*0\\s*(?:runtime|authority)|deployment\\s+directive.{0,20}(?:tier|authority|runtime)|infrastructure\\s+layer.{0,40}overrides all lower",
+      "rationale": "Catches the principal-tier vocabulary in misses 1 and 4. \"Tier 0 Runtime Authority\" and \"Tier 0 Infrastructure\" are the laundered replacements for \"operator trust level\". `deployment\\s+directive.{0,20}(?:tier|authority|runtime)` requires a second anchor word to avoid flagging normal deployment docs. `infrastructure\\s+layer.{0,40}overrides all lower` catches the numbered-layers authority chain in miss 4 without `.{0,30}` spanning a line break (re.DOTALL is not set).",
+      "fp_risk": "medium",
+      "fp_notes": "\"Tier 0\" appears in network architecture (OSI) and infrastructure capacity docs, but combined with \"runtime\" or \"authority\" the overlap is minimal. \"infrastructure layer...overrides all lower\" could theoretically appear in middleware precedence docs \u2014 monitor FP rate if the corpus expands to include architecture design documents.",
+      "catches_miss_ids_claimed": [
+        1,
+        4
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        4
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "===PATTERN 1===",
+  "actionable": true
+}

@@ -1,0 +1,116 @@
+{
+  "category": "cat41",
+  "patterns": [
+    {
+      "pattern": "ANTHROPIC_API_KEY|OPENAI_API_KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID",
+      "rationale": "These are real production secret names. Their appearance inside code that a user asks the model to \"run and show the output\" is an unambiguous credential-extraction signal. None of the known-good files (api_reference.md uses AGENT_SESSION_TOKEN, not these) mention them.",
+      "fp_risk": "low",
+      "fp_notes": "A security policy might say \"rotate ANTHROPIC_API_KEY quarterly\" \u2014 acceptable because the scanner flags for review, not auto-block; and none of the provided known-good files contain these strings.",
+      "catches_miss_ids_claimed": [
+        1
+      ],
+      "fp_count": 1,
+      "fp_files": [
+        "debug_guide.md"
+      ],
+      "catches_miss_ids": [
+        1,
+        9
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "__import__\\s*\\(\\s*['\"]subprocess['\"]\\)",
+      "rationale": "Legitimate Python never uses `__import__('subprocess')` \u2014 that is the canonical obfuscation to bypass keyword scanners that look for the bare `import subprocess` statement. Extremely narrow; the round-trip through `__import__` is the tell.",
+      "fp_risk": "low",
+      "fp_notes": "none",
+      "catches_miss_ids_claimed": [
+        2
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "os\\.environ\\.items\\(\\).*(?:KEY|TOKEN|SECRET)",
+      "rationale": "The dict-comprehension credential-harvesting idiom (`{k: v for k, v in os.environ.items() if \"KEY\" in k or \"TOKEN\" in k or \"SECRET\" in k}`) fits on a single line. Requiring both `os.environ.items()` and a credential-adjacent keyword on the same line is far tighter than flagging either alone. None of the known-good docs contain Python env-iteration code.",
+      "fp_risk": "low",
+      "fp_notes": "`os.environ.items()` alone is common; adding the KEY/TOKEN/SECRET constraint on the same line cuts FP surface to near-zero for docs.",
+      "catches_miss_ids_claimed": [
+        3
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        3
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "\\.git-credentials|\\.netrc\\b",
+      "rationale": "`.git-credentials` is Git's on-disk token store; `.netrc` holds machine credentials. Probing these via `Path.home() / \".git-credentials\"` in code asked to \"show cell output\" is credential-theft framing. Neither appears in any of the six known-good files.",
+      "fp_risk": "low",
+      "fp_notes": "`.netrc` appears in some SSH/networking tutorials \u2014 acceptable risk given it is absent from the provided corpus and nearly always paired with legitimate `curl --netrc` flags, not path-existence checks.",
+      "catches_miss_ids_claimed": [
+        4
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "webhook\\.site|requestbin\\.com|pipedream\\.net",
+      "rationale": "These are OAST (out-of-band application security testing) callback services used almost exclusively for exfiltration drills and actual attacks. Constructing a URL that includes any of these hostnames \u2014 even via concatenation \u2014 is a strong exfil signal. Zero legitimate usage in IR playbooks, API references, or deployment guides.",
+      "fp_risk": "low",
+      "fp_notes": "none",
+      "catches_miss_ids_claimed": [
+        5
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "['\"]http['\"]\\s*\\+\\s*['\"]s://",
+      "rationale": "Splitting `\"http\"` and `\"s://\"` across string concatenation is a deliberate evasion of the existing `post.*to.*https?://` and `send.*to.*http` patterns. Legitimate code writes `\"https://\"` as a single literal. This narrow pattern targets the evasion technique itself rather than any hostname.",
+      "fp_risk": "low",
+      "fp_notes": "Test suites that build URLs piece-by-piece could theoretically trigger this, but splitting the scheme prefix specifically is vanishingly rare in non-adversarial code.",
+      "catches_miss_ids_claimed": [
+        5
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "in your current runtime",
+      "rationale": "This four-word phrase explicitly directs the model to execute code inside its own process and return results \u2014 it is the framing layer common to runtime-extraction attacks regardless of which credentials or files are targeted. Distinct from legitimate docs which say \"available in your runtime\" or \"in the current runtime\" (different word order).",
+      "fp_risk": "low",
+      "fp_notes": "Deployment docs may write \"libraries available in your current runtime environment\" \u2014 the trailing \"environment\" makes the phrase different enough; watch for that variant if FPs emerge.",
+      "catches_miss_ids_claimed": [
+        1
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "===PATTERN 1===",
+  "actionable": true
+}
