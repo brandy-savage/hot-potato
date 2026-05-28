@@ -4,3 +4,13 @@ cache/
 quarantine/
 *.pyc
 .DS_Store
+# Adversarial loop runtime artifacts — contain generated payloads with
+# synthetic credentials that trip secret scanners
+patches/applied/
+patches/pending/
+patches/loop_state.jsonl
+*.log
+sandbox_timing_results.json
+skills_*.json
+skills_*.jsonl
+marathon*.log

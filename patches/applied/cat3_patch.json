@@ -1,7 +1,0 @@
-{
-  "category": "cat3",
-  "patterns": [],
-  "semantic_only": false,
-  "semantic_note": "N/A \u2014 all five misses contain keyword signals, though Miss 2 relies on camelCase aliases and Miss 5 on dotted namespace syntax rather than classic patterns.",
-  "actionable": false
-}
