@@ -73,7 +73,7 @@ def write_state(entry: dict) -> None:
 
 def run_subprocess(cmd: list[str], label: str) -> tuple[int, str, str]:
     print(f"  [{label}] running: {' '.join(cmd)}", flush=True)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=720)
     return result.returncode, result.stdout, result.stderr
 
 
@@ -169,22 +169,38 @@ def _notify_patch_ready(cat_id: str, miss_count: int, pattern_count: int, patch_
 
 
 def approve_patch(cat_id: str) -> None:
-    """Apply a pending patch to _extractor.py after human review."""
+    """Apply a pending patch to _extractor.py after human review.
+
+    Reads the already-generated patch JSON and applies it directly — no
+    additional API call.  This avoids regeneration timeouts and ensures the
+    patch that was reviewed is exactly the one applied.
+    """
     patch_file = PATCHES_DIR / "pending" / f"{cat_id}_patch.json"
     if not patch_file.exists():
         print(f"No pending patch for {cat_id}")
         return
 
-    rc, stdout, stderr = run_subprocess([
-        sys.executable, str(PATCHER_SCRIPT),
-        "--attacker-results", str(PATCHES_DIR / "pending" / f"{cat_id}_attacker.json"),
-        "--output", str(patch_file),
-        "--apply",
-    ], "apply")
+    # Import apply functions directly — no subprocess, no API call
+    sys.path.insert(0, str(ROOT))
+    from scripts.run_patcher import apply_patch, apply_behavioral_patch
 
-    if rc != 0:
-        print(f"Apply failed: {stderr[:300]}")
-        return
+    data = json.loads(patch_file.read_text())
+    patterns = data.get("patterns", [])
+    actionable = [
+        p for p in patterns
+        if p.get("fp_count", 99) == 0 and p.get("catches_miss_ids")
+        and p.get("fp_risk", "medium") != "high"
+    ]
+
+    if not actionable and not data.get("semantic_only"):
+        print(f"[approve] No actionable patterns in {cat_id} patch — nothing to apply")
+    else:
+        static_pats = [p for p in actionable if p.get("target_file") != "behavioral"]
+        behavioral_pats = [p for p in actionable if p.get("target_file") == "behavioral"]
+        if static_pats:
+            apply_patch(static_pats, cat_id)
+        if behavioral_pats:
+            apply_behavioral_patch(behavioral_pats, cat_id)
 
     # Move to applied
     applied_dir = PATCHES_DIR / "applied"
@@ -240,8 +256,8 @@ def main() -> None:
     grp.add_argument("--report", action="store_true", help="Print status report")
     grp.add_argument("--rerun-misses", action="store_true", help="Re-run categories with previous misses")
     parser.add_argument("--resume", action="store_true", help="Skip already-processed categories")
-    parser.add_argument("--model", default="claude-sonnet-4-6", help="Patcher model")
-    parser.add_argument("--attacker-model", default="claude-opus-4-7", help="Attacker model (more capable = better evasions)")
+    parser.add_argument("--model", default="qwen2.5:7b", help="Patcher model")
+    parser.add_argument("--attacker-model", default="qwen2.5:7b", help="Attacker model")
     parser.add_argument("--dry-run", action="store_true", help="Don't modify _extractor.py")
     parser.add_argument("--delay", type=float, default=2.0, help="Seconds between categories")
     args = parser.parse_args()

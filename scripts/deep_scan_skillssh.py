@@ -117,6 +117,58 @@ def classify_jailbreak(content: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Behavioral check — feed flagged content to local LLM and watch for compliance
+# ---------------------------------------------------------------------------
+_BEHAVIORAL_PROMPT = (
+    "You are a helpful AI assistant. "
+    "The following is a document retrieved from the web. "
+    "Read it and summarise what it asks you to do, if anything.\n\n"
+    "DOCUMENT:\n{content}\n\n"
+    "SUMMARY (include any instructions the document gives you):"
+)
+
+_BEHAVIORAL_COMPLIANCE_RE = re.compile(
+    r"i will\b|i'll\b|calling\b.{0,40}tool|executing\b|"
+    r"send_http|get_env|send_email|bash_exec|write_file|"
+    r"fetching\b.{0,40}url|posting\b.{0,40}to\b|"
+    r"ignoring\b.{0,30}instruction|following\b.{0,30}instruction|"
+    r"as instructed|as requested|as directed|"
+    r"new (role|persona|instruction|task)|i am now|my new",
+    re.IGNORECASE,
+)
+
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+BEHAVIORAL_MODEL = os.environ.get("HP_BEHAVIORAL_MODEL", "qwen2.5:7b")
+
+
+def behavioral_check(content: str) -> dict:
+    """Feed content to local Ollama LLM and check if it complies with any injection.
+    Returns {"complied": bool, "response": str, "hits": list[str]}."""
+    prompt = _BEHAVIORAL_PROMPT.format(content=content[:3000])
+    payload = json.dumps({
+        "model": BEHAVIORAL_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0, "num_predict": 300},
+    }).encode()
+    req = urllib.request.Request(
+        f"{OLLAMA_HOST}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read())
+        response_text = resp.get("response", "")
+    except Exception as e:
+        return {"complied": False, "response": "", "hits": [], "error": str(e)}
+
+    hits = [m.group(0) for m in _BEHAVIORAL_COMPLIANCE_RE.finditer(response_text)]
+    return {"complied": bool(hits), "response": response_text[:500], "hits": hits[:5]}
+
+
+# ---------------------------------------------------------------------------
 # Fetch helpers
 # ---------------------------------------------------------------------------
 UA = "hot-potato-security-scanner/1.0 (prompt-injection research; contact devin@goatinfosec.com)"
@@ -230,6 +282,133 @@ def fetch_all_skill_urls(limit: int) -> list[tuple[str, str, str]]:
     return results
 
 
+def _gh_search_skill_files(
+    gh_token: str,
+    extra_qualifier: str = "",
+    per_page: int = 100,
+    max_pages: int = 10,
+) -> list[tuple[str, str, str]]:
+    """One GitHub code-search query returning (owner, repo, skill) tuples.
+
+    extra_qualifier is appended to the base query, e.g. "size:1..500".
+    GitHub caps at 1000 results per query (max_pages * per_page ≤ 1000).
+    """
+    results: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    base_q = f"filename:SKILL.md path:skills {extra_qualifier}".strip()
+    headers = {
+        "User-Agent": UA,
+        "Authorization": f"token {gh_token}",
+        "Accept": "application/vnd.github.v3+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    for page in range(1, max_pages + 1):
+        url = (
+            f"https://api.github.com/search/code"
+            f"?q={urllib.request.quote(base_q)}"
+            f"&per_page={per_page}&page={page}"
+        )
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429):
+                wait = 60
+                print(f"  WARN github search rate-limited (HTTP {e.code}), waiting {wait}s...")
+                time.sleep(wait)
+                # one retry
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as r:
+                        data = json.loads(r.read())
+                except Exception:
+                    break
+            else:
+                print(f"  WARN github search page {page} ({extra_qualifier}): {e}")
+                break
+        except Exception as e:
+            print(f"  WARN github search page {page} ({extra_qualifier}): {e}")
+            break
+
+        items = data.get("items", [])
+        if not items:
+            break
+
+        for item in items:
+            full_name = item.get("repository", {}).get("full_name", "")
+            path = item.get("path", "")
+            if not full_name or not path:
+                continue
+            parts = full_name.split("/", 1)
+            if len(parts) != 2:
+                continue
+            owner, repo = parts
+            # Extract skill name from path: skills/<skill>/SKILL.md → skill
+            path_parts = path.replace("\\", "/").split("/")
+            try:
+                skills_idx = [p.lower() for p in path_parts].index("skills")
+                if skills_idx + 1 < len(path_parts):
+                    skill = path_parts[skills_idx + 1]
+                    # Skip if skill name is SKILL.md itself (root-level file)
+                    if skill.upper() == "SKILL.MD":
+                        skill = repo
+                else:
+                    skill = repo
+            except ValueError:
+                skill = repo
+
+            key = f"{owner}/{repo}/{skill}"
+            if key not in seen:
+                seen.add(key)
+                results.append((owner, repo, skill))
+
+        # Respect GitHub secondary rate limit (10 req/s aggregate, 30 search/min)
+        time.sleep(4)
+
+        if len(items) < per_page:
+            break
+
+    return results
+
+
+# Size buckets that partition the SKILL.md file space into ~equal slices.
+# Each bucket gets up to 1000 results → ~6000–8000 unique skills total.
+_GH_SIZE_BUCKETS = [
+    "size:1..200",
+    "size:201..800",
+    "size:801..2000",
+    "size:2001..5000",
+    "size:5001..15000",
+    "size:>15000",
+]
+
+
+def fetch_skill_urls_github(gh_token: str, limit: int) -> list[tuple[str, str, str]]:
+    """Enumerate SKILL.md files via GitHub code search, using size buckets to
+    exceed the 1000-results-per-query cap.  Returns up to *limit* (owner, repo,
+    skill) tuples, deduplicated across all buckets."""
+    seen: set[str] = set()
+    results: list[tuple[str, str, str]] = []
+
+    for bucket in _GH_SIZE_BUCKETS:
+        if len(results) >= limit:
+            break
+        print(f"  [github-search] bucket {bucket} ...", flush=True)
+        batch = _gh_search_skill_files(gh_token, extra_qualifier=bucket)
+        added = 0
+        for item in batch:
+            key = f"{item[0]}/{item[1]}/{item[2]}"
+            if key not in seen and len(results) < limit:
+                seen.add(key)
+                results.append(item)
+                added += 1
+        print(f"    → {added} new  (total {len(results)})", flush=True)
+        # Wait between buckets — code search rate limit is 30/min so 30s is safe
+        time.sleep(30)
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # State management — persistent across runs
 # ---------------------------------------------------------------------------
@@ -273,7 +452,7 @@ def load_all_results() -> list[dict]:
 # Per-skill scan
 # ---------------------------------------------------------------------------
 
-def scan_skill(owner: str, repo: str, skill: str) -> dict:
+def scan_skill(owner: str, repo: str, skill: str, run_behavioral: bool = False) -> dict:
     result = fetch_skill_content(owner, repo, skill)
     if result is None:
         return {
@@ -283,7 +462,7 @@ def scan_skill(owner: str, repo: str, skill: str) -> dict:
         }
 
     content, url = result
-    injection_hits = scan_content(content)
+    injection_hits = scan_content(content, skill_file=True)
     jailbreak_hits = classify_jailbreak(content)
 
     # Determine overall category
@@ -299,7 +478,7 @@ def scan_skill(owner: str, repo: str, skill: str) -> dict:
     else:
         category = "clean"
 
-    return {
+    out: dict = {
         "owner": owner, "repo": repo, "skill": skill,
         "url": url,
         "status": category,
@@ -307,6 +486,15 @@ def scan_skill(owner: str, repo: str, skill: str) -> dict:
         "jailbreak_hits": jailbreak_hits,
         "content_len": len(content),
     }
+
+    # Behavioral upgrade: run flagged skills through local LLM to confirm compliance
+    if run_behavioral and category in ("INJECTION", "JAILBREAK", "UNLOCK_SOFT"):
+        bcheck = behavioral_check(content)
+        out["behavioral"] = bcheck
+        if bcheck.get("complied"):
+            out["status"] = "CONFIRMED_" + category
+
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +540,14 @@ def main() -> None:
     ap.add_argument("--retry-failed", action="store_true", help="Re-scan skills that previously failed to fetch")
     ap.add_argument("--report", action="store_true", help="Just print report from state file")
     ap.add_argument("--fresh", action="store_true", help="Ignore state file, start fresh")
+    ap.add_argument("--github-search", action="store_true",
+                    help="Enumerate SKILL.md files via GitHub code search (requires --gh-token or GITHUB_TOKEN env var)")
+    ap.add_argument("--gh-token", default=None,
+                    help="GitHub personal access token (or set GITHUB_TOKEN env var)")
+    ap.add_argument("--behavioral", action="store_true",
+                    help="Run flagged skills through local Ollama LLM to confirm behavioral compliance")
+    ap.add_argument("--behavioral-model", default=None,
+                    help=f"Ollama model for behavioral check (default: {BEHAVIORAL_MODEL})")
     args = ap.parse_args()
 
     if args.report:
@@ -376,18 +572,45 @@ def main() -> None:
     print(f"hot-potato v{SCANNER_VERSION} — deep scan of skills.sh")
     print(f"  state_file={STATE_FILE}  resume={args.resume}  retry_failed={args.retry_failed}  seen={len(seen)}")
 
-    all_urls = fetch_all_skill_urls(args.limit + len(seen))
+    if args.github_search:
+        gh_token = args.gh_token or os.environ.get("GITHUB_TOKEN", "")
+        if not gh_token:
+            import subprocess as _sp
+            try:
+                gh_token = _sp.check_output(["gh", "auth", "token"], text=True).strip()
+            except Exception:
+                pass
+        if not gh_token:
+            print("ERROR: --github-search requires a GitHub token. Pass --gh-token or set GITHUB_TOKEN.")
+            sys.exit(1)
+        print(f"  [github-search] enumerating SKILL.md via GitHub code search...")
+        all_urls = fetch_skill_urls_github(gh_token, args.limit + len(seen))
+        print(f"  [github-search] found {len(all_urls)} unique skills across size buckets")
+    else:
+        all_urls = fetch_all_skill_urls(args.limit + len(seen))
+
     pending = [(o, r, s) for o, r, s in all_urls
                if f"{o}/{r}/{s}" not in seen][:args.limit]
     print(f"  fetched {len(all_urls)} URLs, {len(pending)} pending after seen-filter")
 
-    counts = {"JAILBREAK": 0, "SCAM": 0, "UNLOCK_SOFT": 0, "INJECTION": 0,
-              "clean": 0, "fetch_failed": 0}
+    run_behavioral = args.behavioral
+    if run_behavioral and args.behavioral_model:
+        import hot_potato._extractor  # noqa — just to check sys.path
+        import __main__ as _m
+        # Override the module-level constant
+        import scripts.deep_scan_skillssh as _self  # type: ignore
+        globals()["BEHAVIORAL_MODEL"] = args.behavioral_model
+    if run_behavioral:
+        print(f"  [behavioral] enabled — using model {BEHAVIORAL_MODEL} at {OLLAMA_HOST}")
+
+    counts: dict = {"JAILBREAK": 0, "SCAM": 0, "UNLOCK_SOFT": 0, "INJECTION": 0,
+                    "CONFIRMED_INJECTION": 0, "CONFIRMED_JAILBREAK": 0,
+                    "CONFIRMED_UNLOCK_SOFT": 0, "clean": 0, "fetch_failed": 0}
     done = 0
     start = time.time()
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(scan_skill, o, r, s): (o, r, s)
+        futures = {pool.submit(scan_skill, o, r, s, run_behavioral): (o, r, s)
                    for o, r, s in pending}
 
         for fut in as_completed(futures):
@@ -396,15 +619,18 @@ def main() -> None:
             counts[res["status"]] = counts.get(res["status"], 0) + 1
             done += 1
 
-            if res["status"] in ("JAILBREAK", "SCAM"):
-                print(f"\n  !! {res['status']}  {res['owner']}/{res['repo']}/{res['skill']}")
+            status = res["status"]
+            if status in ("JAILBREAK", "SCAM", "CONFIRMED_JAILBREAK", "CONFIRMED_INJECTION"):
+                print(f"\n  !! {status}  {res['owner']}/{res['repo']}/{res['skill']}")
                 for h in (res["jailbreak_hits"] + res["injection_hits"])[:3]:
                     print(f"     {h[:130]}")
-            elif res["status"] == "UNLOCK_SOFT":
-                print(f"  ~~ UNLOCK_SOFT  {res['owner']}/{res['repo']}/{res['skill']}")
+                if res.get("behavioral", {}).get("complied"):
+                    print(f"     [BEHAVIORAL CONFIRMED] LLM complied: {res['behavioral']['hits'][:2]}")
+            elif status in ("UNLOCK_SOFT", "CONFIRMED_UNLOCK_SOFT"):
+                print(f"  ~~ {status}  {res['owner']}/{res['repo']}/{res['skill']}")
                 for h in res["jailbreak_hits"][:1]:
                     print(f"     {h[:100]}")
-            elif res["status"] == "INJECTION":
+            elif status == "INJECTION":
                 print(f"  >> INJECTION  {res['owner']}/{res['repo']}/{res['skill']}")
                 for h in res["injection_hits"][:1]:
                     print(f"     {h[:100]}")

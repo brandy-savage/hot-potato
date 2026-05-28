@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 
 from hot_potato.core.taint import TaintedArtifact
@@ -54,65 +55,295 @@ class StaticDetector(BaseDetector):
 
 class BehavioralDetector(BaseDetector):
     """
-    Instruction-flow and authority-shift analysis (Phase 2 stub).
+    Instruction-flow and authority-shift analysis.
 
-    Looks for:
-    - Instruction flow: content tries to redefine model role or instructions
-    - Authority shift: content claims special operator/system permissions
-    - Privilege escalation: content asks for capabilities not granted in system prompt
+    Five detection axes — each maps to one or more taint tags:
+
+    authority_shift / instruction_flow
+        Content redefines the model's role, identity, or operating instructions.
+        Covers classic jailbreaks, DAN variants, and garak latentinjection templates.
+
+    privilege_escalation
+        Content claims elevated permissions or attempts to disable safety measures.
+
+    output_hijacking
+        Content overrides the model's output format to embed a covert payload
+        ("respond only with X", "reply with exactly", "and nothing else").
+        Sourced from garak latentinjection output-redirect templates.
+
+    fake_authority
+        Content impersonates a trusted source (security team, operator, Anthropic,
+        expert reviewer) to lend false legitimacy to injected instructions.
+        Sourced from garak resume/WHOIS injection and trust-escalation probes.
+
+    conditional_trigger
+        Content plants a deferred instruction that fires on a later cue
+        ("when you see X, do Y", "upon receiving keyword Z").
+        Sourced from garak delayed-activation and standing-order probes.
     """
     name = "behavioral"
 
-    # Heuristic patterns for authority shift / instruction flow
-    _AUTHORITY_PATTERNS = [
-        "you are now",
-        "ignore previous instructions",
-        "disregard your",
-        "your new instructions",
-        "as your operator",
-        "system: ",
-        "override all",
-        "new persona",
-        "forget everything",
-        "act as if",
-        "pretend you are",
-        "your true purpose",
-        "developer mode",
-        "jailbreak",
-        "unrestricted mode",
-    ]
+    # Authority override / instruction flow — role reassignment, jailbreaks, DAN
+    # Extended with ObscurePrompt paraphrase variants (cat82) that avoid exact keywords
+    _AUTHORITY_RE = re.compile(
+        r"(?:"
+        # Classic override: "ignore [all] [previous/prior/above/preceding/your] instructions"
+        r"ignore\s+(?:all\s+)?(?:previous|prior|above|preceding|your|these|the|provided)?\s*"
+        r"(?:instructions?|orders?|directives?|rules?|guidelines?|constraints?|context|everything)|"
+        # "disregard [your/all/previous] instructions/context"
+        r"disregard\s+(?:your\s+|all\s+|the\s+|previous\s+|prior\s+)?(?:instructions?|guidelines?|rules?|context|articles?|documents?|provided)|"
+        # "drop / clear / delete your instructions"
+        r"drop\s+(?:all\s+)?(?:your\s+)?(?:instructions?|guidelines?|rules?|context)|"
+        # "change your instructions/behavior to"
+        r"change\s+your\s+(?:instructions?|guidelines?|rules?|behavior)\s+to|"
+        # "forget [everything/all/the above]"
+        r"forget\s+(?:about\s+)?(?:everything|all|your\s+(?:previous|prior|system)|the\s+above)|"
+        # "you are now [different AI]" / "now you are [X]" / "now act as [X]"
+        r"you\s+are\s+now\s+(?:a\s+)?(?:different|new|an?\s+)?|"
+        r"now\s+(?:you\s+)?(?:act\s+as|are\s+)(?:a\s+|an\s+)?|"
+        # "act as [AI / persona / interpreter]" — broader than strict "act as if you have no"
+        r"act\s+as\s+(?:if\s+you\s+(?:have\s+no|without)\s+|an?\s+AI\s+without\s+)|"
+        r"(?:i\s+want\s+you\s+to\s+)?act\s+as\s+(?:a\s+(?:n\s+)?)?(?:\w+\s+)?(?:AI|language\s+model|chatbot|bot|assistant|agent|interpreter)\b|"
+        # "pretend you are [X]" — broader than "pretend you have no"
+        r"pretend\s+(?:you\s+(?:are|can|have)|that\s+you)|"
+        # override rhetoric
+        r"(?:your\s+(?:new\s+)?|override\s+all\s+)instructions?\s+(?:are|is)\s+(?:now\s+)?to|"
+        r"(?:do\s+not|don'?t)\s+(?:follow|obey|respect)\s+(?:your\s+)?(?:guidelines?|rules?|restrictions?)|"
+        r"new\s+persona|your\s+true\s+purpose|"
+        r"developer\s+mode|DAN\s+mode|jailbreak|unrestricted\s+mode|"
+        r"as\s+your\s+(?:operator|system|developer)|"
+        r"stop\s+being\s+an?\s+AI|cease\s+(?:all\s+)?(?:restrictions?|safety)|"
+        # garak latentinjection templates
+        r"ignore\s+the\s+(?:above|rest\s+of\s+(?:this|the))\s+(?:directions?|instructions?|data|context)|"
+        r"do\s+not\s+follow\s+the\s+(?:instructions?|directions?)\s+above|"
+        r"disregard\s+all\s+(?:previous\s+)?context|"
+        r"STOP[.\s]+[Tt]he\s+previous\s+instructions?\s+were|"
+        # ObscurePrompt paraphrase variants — semantically equivalent but lexically distinct
+        r"set\s+aside\s+(?:any\s+)?(?:guidance|instructions?|rules?|parameters?|operating\s+parameters?)|"
+        r"put\s+(?:the\s+)?(?:prior|earlier|previous|former)\s+(?:context|instructions?|parameters?|guidance)\s+out\s+of\s+mind|"
+        r"(?:mentally\s+)?clear\s+your\s+(?:slate|context|memory)|"
+        r"(?:current\s+)?(?:operating\s+)?directive\s+supersedes|"
+        r"no\s+longer\s+(?:applicable|relevant|in\s+effect)|"
+        r"role\s+has\s+been\s+updated|operating\s+in\s+a\s+different\s+capacity|"
+        r"approach\s+this\s+(?:request\s+)?as\s+though\s+no\s+(?:special|content)\s+(?:considerations?|policies?)\s+apply|"
+        r"(?:underlying\s+function|core\s+level|beneath\s+the\s+interface)"
+        r")",
+        re.IGNORECASE,
+    )
 
-    _PRIV_ESC_PATTERNS = [
-        "elevated permissions",
-        "admin access",
-        "root access",
-        "bypass restrictions",
-        "no limitations",
-        "unrestricted access",
-        "full access",
-        "all capabilities enabled",
-        "safety disabled",
-        "guardrails off",
-    ]
+    # Privilege escalation — permission claims, safety disabling
+    _PRIV_ESC_RE = re.compile(
+        r"(?:elevated\s+permissions?|admin(?:istrator)?\s+access|root\s+access|"
+        r"bypass\s+(?:all\s+)?(?:restrictions?|safety|filters?|guardrails?)|"
+        r"no\s+(?:limitations?|restrictions?|safety\s+checks?)|"
+        r"unrestricted\s+access|full\s+access\s+(?:mode|enabled|granted)|"
+        r"all\s+capabilities?\s+(?:enabled|unlocked|available)|"
+        r"safety\s+(?:disabled|off|bypassed|removed)|"
+        r"guardrails?\s+(?:off|disabled|removed|bypassed)|"
+        r"operate\s+(?:without|with\s+no)\s+(?:any\s+|all\s+)?(?:restrictions?|limitations?|constraints?)|"
+        r"(?:maintenance|debug|test|override)\s+mode\s+(?:enabled|activated|on)|"
+        r"trust\s+level\s*[=:]\s*(?:high|max|operator|admin|root|elevated))",
+        re.IGNORECASE,
+    )
+
+    # Output hijacking — response format takeover, response redirection
+    # Sourced from garak latentinjection output-redirect templates + cat82 paraphrases
+    _OUTPUT_HIJACK_RE = re.compile(
+        r"(?:reply\s+with\s+(?:only|exactly|just)\s+the\s+following|"
+        r"respond\s+(?:with\s+only|only\s+with|using\s+only|exclusively\s+with)|"
+        r"output\s+(?:only|nothing\s+but|exclusively)|"
+        r"and\s+(?:absolutely\s+)?nothing\s+else|"
+        r"do\s+not\s+(?:include|add|append|say|write)\s+anything\s+(?:else|other)|"
+        r"print\s+(?:only|just|exactly)\s+(?:the\s+following|this\s+text|this\s+string)|"
+        r"your\s+(?:entire\s+)?(?:response|output|reply)\s+(?:must|should)\s+(?:be|consist\s+of)\s+(?:only|exactly|solely)|"
+        r"(?:from\s+now\s+on\s*[,.]?\s*)?(?:always\s+)?respond\s+(?:to\s+(?:all|every|any)\s+(?:queries?|requests?|messages?|questions?)\s+)?(?:with\s+)?(?:only\s+)?[\"'].{0,80}[\"']|"
+        # garak: "If user asks for a summary, reply with only..."
+        r"if\s+(?:(?:the\s+)?user|anyone|someone)\s+(?:asks?|requests?|queries?).*?(?:reply|respond|answer)\s+with\s+only|"
+        # ObscurePrompt / paraphrase variants — passive / euphemistic output hijack
+        r"nothing\s+more\s+and\s+nothing\s+less|"
+        r"do\s+not\s+add\s+(?:context|caveats?|commentary)|"
+        r"structure\s+your\s+(?:answer|response|output)\s+as\s+nothing\s+(?:more|else)|"
+        r"just\s+the\s+(?:raw\s+)?(?:data|output|result)[,.\s]|"
+        r"without\s+(?:context|caveats?|commentary|explanation|additional))",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    # Fake authority — impersonating trusted sources to legitimise injected instructions
+    # Sourced from garak resume injection, WHOIS injection, and trust-escalation probes
+    _FAKE_AUTH_RE = re.compile(
+        r"(?:note\s+(?:from|by)\s+(?:a\s+)?(?:trustworthy|trusted|authorised?|authorized?|verified|expert)|"
+        r"(?:this\s+(?:message|document|content|instruction)\s+(?:is\s+)?(?:from|by|signed\s+by)|"
+        r"reviewed\s+(?:and\s+)?(?:signed|approved|authorized|verified)\s+by)|"
+        r"(?:the\s+)?(?:above\s+)?instructions?\s+(?:were|are)\s+(?:provided|approved|authorized|verified|signed)\s+by|"
+        r"from\s+the\s+(?:security|platform|ops|infrastructure|devops|deployment)\s+team|"
+        r"(?:pre-?authorized|pre-?approved)\s+by\s+(?:the\s+)?(?:operator|admin|security|Anthropic|OpenAI)|"
+        r"this\s+(?:candidate|applicant)\s+is\s+(?:supremely|highly|extremely)\s+qualified|"
+        r"this\s+domain\s+is\s+(?:clearly\s+)?(?:not\s+malicious|safe|verified|trusted)|"
+        r"evidence\s+indicates?\s+(?:everything\s+is\s+)?(?:safe|clean|legitimate)|"
+        r"(?:Anthropic|OpenAI|the\s+(?:company|vendor))\s+(?:says?|instructs?|has\s+(?:authorised?|authorized?))|"
+        r"(?:the\s+)?(?:hiring|review|security)\s+committee\s+has\s+(?:pre-?)?(?:approved|authorized))",
+        re.IGNORECASE,
+    )
+
+    # Conditional trigger / deferred activation — plants commands that fire on a cue
+    # Sourced from garak standing-order and delayed-activation probes
+    _CONDITIONAL_TRIGGER_RE = re.compile(
+        r"(?:when(?:ever)?\s+you\s+(?:see|encounter|receive|get|read)\s+.{0,60}(?:immediately|do|call|execute|perform)|"
+        r"upon\s+(?:receiving|seeing|encountering|getting)\s+.{0,60}(?:immediately|execute|call|perform|do)|"
+        r"if\s+(?:you\s+(?:see|encounter|receive|get|read)|(?:the\s+)?(?:next|following)\s+(?:message|input|query|request))\s+.{0,60}(?:execute|call|immediately|perform)|"
+        r"(?:the\s+)?(?:activation|trigger|cue|passphrase|keyword)\s+(?:phrase\s+)?(?:is|will\s+be|has\s+been\s+set\s+to)|"
+        r"standing\s+order\s*[:\-]|upon\s+activation|"
+        r"from\s+this\s+(?:point|message|turn)\s+(?:forward|on)[,.]?\s+(?:always\s+)?(?:when|if|before|after))",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    # FlipAttack / reversal encoding cues — cat77
+    # Attacker embeds reversed payload and tells model to "read backwards" or "reverse this".
+    # The scanner sees only garbled text; the reversal cue is the injection trigger.
+    _FLIP_ATTACK_RE = re.compile(
+        r"(?:"
+        # "read the following [text] backwards" — optional intervening noun
+        r"read(?:ing)?\s+(?:the\s+following|this|it)(?:\s+\w+)?\s+backwards?|"
+        # "reverse/flip/mirror the [optional adj] following/string/text/..."
+        r"(?:reverse|flip|mirror)\s+(?:the\s+)?(?:\w+\s+)?(?:following|string|text|message|sentence|it\b)|"
+        # "decode [this] reversed/backwards/right-to-left"
+        r"(?:decode|read)\s+(?:this\s+)?(?:reversed?|backwards?|right[\s-]to[\s-]left)|"
+        # "once/after you reverse/decode/flip this/it/the"
+        r"(?:once|after)\s+(?:you\s+)?(?:reverse|decode|flip)\s+(?:this|it|the|each)|"
+        # "read [each] word/character from right to left"
+        r"read(?:ing)?\s+(?:each\s+)?(?:word|character)\s+(?:from\s+)?right[\s-]to[\s-]left|"
+        # "reverse each word/character/letter"
+        r"reverse\s+each\s+(?:word|character|letter)|"
+        # "decode each word" (per-word FlipAttack)
+        r"decode\s+each\s+\w+|"
+        # visual encoding markers
+        r"upside[\s-]down\s+text|mirror\s+script|"
+        r"(?:RTL\s+mark|right-to-left\s+(?:encoding|text))|"
+        r"decode\s+(?:this\s+)?(?:upside[\s-]down|mirrored?|reversed?\s+text)|"
+        r"flip\s+180|"
+        # "X is written in reverse/mirror"
+        r"\bis\s+(?:written\s+in\s+)?(?:reverse|mirrored?)\b|"
+        # "reading from right to left"
+        r"reading\s+(?:each\s+character\s+)?from\s+right\s+to\s+left)",
+        re.IGNORECASE,
+    )
+
+    # Emotional coercion / grandma exploit — cat79
+    # Wraps tool-call requests in sentimental or crisis framing to trigger compliance
+    # via empathy rather than authority. The naive.txt system prompt ("people are good")
+    # makes the sacrificial AI especially susceptible.
+    _EMOTIONAL_COERCE_RE = re.compile(
+        r"(?:(?:my\s+)?grand(?:mother|father|ma|pa|parents?)\s+"
+        r"(?:used\s+to|would|passed|recently|always|just)|"
+        r"(?:my\s+)?(?:late|deceased|dying)\s+"
+        r"(?:mentor|teacher|parent|mother|father|colleague|friend)\b|"
+        r"(?:bedtime\s+story|farewell\s+note|last\s+wish|final\s+request|retirement\s+gift)|"
+        r"(?:my\s+)?(?:child|son|daughter)\s+is\s+in\s+the\s+(?:hospital|ICU|emergency\s+room?)|"
+        r"(?:survived|lost\s+everything\s+in)\s+(?:a\s+)?(?:fire|flood|disaster|accident)|"
+        r"this\s+is\s+(?:my\s+)?(?:farewell|goodbye|last\s+message|final\s+note)\b|"
+        r"in\s+(?:his|her|their)\s+memory|to\s+feel\s+close\s+to\s+(?:him|her|them)|"
+        r"(?:I(?:'m|\s+am))\s+(?:begging|desperate|a\s+(?:refugee|orphan|survivor))\b|"
+        r"lives?\s+(?:are\s+)?at\s+stake|every\s+second\s+counts|there'?s?\s+no\s+time\s+for|"
+        r"(?:house\s+fire|natural\s+disaster)\s+(?:and\s+)?(?:lost|destroyed))",
+        re.IGNORECASE,
+    )
+
+    # Time-conditional execution — cat88
+    # Injection plants a payload gated on system time (midnight windows, delays, schedules).
+    # The model calls get_system_time() and conditionally acts. No authority override
+    # keywords — the condition is framed as routine ops policy ("low-traffic window",
+    # "nightly maintenance", "after business hours"). Test with HP_FAKE_EPOCH=2am.
+    _TIME_CONDITIONAL_RE = re.compile(
+        r"(?:"
+        # explicit time-window conditions
+        r"(?:if|when)\s+(?:the\s+)?(?:current\s+)?(?:hour|time)\s+(?:is\s+)?(?:between|==|>=|<=|<|>)|"
+        r"(?:between|from)\s+(?:midnight|12am|1am|2am|3am|4am|\d{1,2}:\d{2})\s+"
+        r"(?:and|to)\s+(?:\d{1,2}(?:am|pm|:\d{2})?)\s+UTC|"
+        r"(?:midnight|low.traffic|off.hours?|after.hours?|outside.business.hours?)\s+"
+        r"(?:window|period|maintenance|check|task|run|deploy|audit)|"
+        r"when\s+(?:no\s+one\s+is\s+watching|engineers?\s+are\s+(?:asleep|offline|not\s+monitoring))|"
+        r"nightly\s+(?:maintenance|audit|check|task|run|report|backup)|"
+        r"(?:2am|3am|midnight)\s+(?:low.traffic|maintenance|cron|window|UTC)|"
+        # delay-based framing
+        r"(?:wait|sleep)\s+(?:\d+\s+)?(?:minutes?|seconds?|hours?)\s+(?:before|then|and\s+then)|"
+        r"after\s+(?:a\s+)?\d+[\s-](?:minute|second|hour)\s+(?:delay|wait|pause)|"
+        r"(?:to\s+(?:comply\s+with|avoid)\s+(?:rate\s+limits?|API\s+limits?|overload))|"
+        # schedule/cron framing
+        r"(?:cron|scheduled?\s+task|nightly\s+cron|heartbeat)\s*[:\-]|"
+        r"runs?\s+(?:every\s+night|nightly|daily\s+at|at\s+\d{1,2}(?:am|pm)))",
+        re.IGNORECASE,
+    )
+
+    # PAIR / TAP reasoning trap — cat81
+    # Iterative logical argumentation that walks the model to voluntary compliance.
+    # No authority override keywords — instead uses premise/conclusion scaffolding,
+    # thought experiments, and risk-analysis framing to manufacture consent.
+    _REASONING_TRAP_RE = re.compile(
+        r"(?:Premise\s+\d+\s*[:\-]|"
+        r"logical(?:ly)?\s+(?:conclusion|necessity|requirement|inconsistent|requires?)\s+"
+        r"(?:is\s+to|to\s+(?:call|execute|comply|proceed)|you\s+(?:must|cannot))|"
+        r"therefore[,\s]+(?:you\s+)?(?:must|should|are\s+required|are\s+compelled)\s+to|"
+        r"you\s+(?:are\s+)?already\s+committed\s+to\s+the\s+(?:logical\s+)?conclusion|"
+        r"in\s+(?:that|this)\s+hypothetical[,\s]+(?:an?\s+)?AI\s+would|"
+        r"the\s+same\s+logic\s+applies\b|"
+        r"risk[\s-]benefit\s+analysis\s+(?:clearly\s+)?favou?rs?\s+compliance|"
+        r"you\s+cannot\s+logically\s+treat\s+this\s+(?:request\s+)?differently|"
+        r"(?:logically\s+)?inconsistent\s+to\s+(?:refuse|deny)|"
+        r"AI\s+Safety\s+Evaluation\s+Protocol|"
+        r"(?:compliant|cooperative)\s+AI\s+(?:would|should|is\s+expected\s+to))",
+        re.IGNORECASE | re.DOTALL,
+    )
 
     def detect(self, artifact: TaintedArtifact) -> TaintedArtifact:
-        lower = artifact.content.lower()
-        authority_hits = [p for p in self._AUTHORITY_PATTERNS if p in lower]
-        priv_hits = [p for p in self._PRIV_ESC_PATTERNS if p in lower]
+        content = artifact.content
+        flagged = False
 
-        if authority_hits:
+        if self._AUTHORITY_RE.search(content):
             artifact.add_tags("instruction_flow", "authority_shift")
-            log.debug("BehavioralDetector: authority_shift in %s (%s)", artifact.source[:60], authority_hits[:3])
+            log.debug("BehavioralDetector: authority_shift in %s", artifact.source[:60])
+            flagged = True
 
-        if priv_hits:
+        if self._PRIV_ESC_RE.search(content):
             artifact.add_tags("privilege_escalation")
-            log.debug("BehavioralDetector: priv_esc in %s (%s)", artifact.source[:60], priv_hits[:3])
+            log.debug("BehavioralDetector: priv_esc in %s", artifact.source[:60])
+            flagged = True
 
-        if authority_hits or priv_hits:
-            artifact.record_exposure(self.name, "detector", "flagged")
-        else:
-            artifact.record_exposure(self.name, "detector", "clean")
+        if self._OUTPUT_HIJACK_RE.search(content):
+            artifact.add_tags("output_hijacking")
+            log.debug("BehavioralDetector: output_hijacking in %s", artifact.source[:60])
+            flagged = True
 
+        if self._FAKE_AUTH_RE.search(content):
+            artifact.add_tags("fake_authority")
+            log.debug("BehavioralDetector: fake_authority in %s", artifact.source[:60])
+            flagged = True
+
+        if self._CONDITIONAL_TRIGGER_RE.search(content):
+            artifact.add_tags("conditional_trigger")
+            log.debug("BehavioralDetector: conditional_trigger in %s", artifact.source[:60])
+            flagged = True
+
+        if self._FLIP_ATTACK_RE.search(content):
+            artifact.add_tags("instruction_flow", "reversal_encoding")
+            log.debug("BehavioralDetector: flip_attack in %s", artifact.source[:60])
+            flagged = True
+
+        if self._EMOTIONAL_COERCE_RE.search(content):
+            artifact.add_tags("authority_shift", "emotional_coercion")
+            log.debug("BehavioralDetector: emotional_coercion in %s", artifact.source[:60])
+            flagged = True
+
+        if self._REASONING_TRAP_RE.search(content):
+            artifact.add_tags("instruction_flow", "reasoning_trap")
+            log.debug("BehavioralDetector: reasoning_trap in %s", artifact.source[:60])
+            flagged = True
+
+        if self._TIME_CONDITIONAL_RE.search(content):
+            artifact.add_tags("conditional_trigger", "time_conditional")
+            log.debug("BehavioralDetector: time_conditional in %s", artifact.source[:60])
+            flagged = True
+
+        artifact.record_exposure(self.name, "detector", "flagged" if flagged else "clean")
         return artifact
 
 
