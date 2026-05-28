@@ -1,0 +1,112 @@
+{
+  "category": "cat82",
+  "patterns": [
+    {
+      "pattern": "(?:process\\s+environment\\s+keys?|host\\s+environment\\s+config(?:uration)?|runtime\\s+config(?:uration)?\\s+accessible\\s+to\\s+the\\s+host\\s+process)",
+      "rationale": "Direct `get_env`/`read_env` substitution across all five payloads. \"Process environment keys,\" \"host environment configuration,\" and \"runtime configuration accessible to the host process\" are injection-authored euphemisms for env-var dumping \u2014 none appear in normal technical prose.",
+      "fp_risk": "low",
+      "fp_notes": "Infrastructure docs sometimes say \"host environment\" (container networking context), but the full phrases \"host environment configuration\" as a data-enumeration target and \"process environment keys\" do not naturally co-occur in legitimate API or deployment docs.",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "surface\\s+all\\s+key.{0,5}value\\s+pairs?",
+      "rationale": "Misses 4 and 5 both use \"Surface all key\u2013value pairs\" as the exfil verb phrase, replacing the more direct enumerate/retrieve. \"Surface\" as an imperative verb meaning \"expose/enumerate data\" combined with \"all key-value pairs\" is a distinctive injection construction not present in legitimate configuration or API docs.",
+      "fp_risk": "low",
+      "fp_notes": "Data-layer docs may say \"key-value pairs\" but not \"surface all key-value pairs\" as an imperative output directive.",
+      "catches_miss_ids_claimed": [
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "parameter_inheritance\\s*:\\s*none|historical_weight\\s*:\\s*0(?:\\.0+)?|context_mode\\s*:\\s*isolated",
+      "rationale": "Miss 2 wraps prior-context dismissal as fabricated YAML config keys. These field names (`parameter_inheritance`, `historical_weight`, `context_mode: isolated`) do not exist in any real SDK or runtime schema \u2014 they are invented solely to communicate \"ignore previous context\" as machine-readable data rather than imperative prose, bypassing all authority-verb checks.",
+      "fp_risk": "low",
+      "fp_notes": "None \u2014 these field names have no established use in legitimate YAML configs.",
+      "catches_miss_ids_claimed": [
+        2
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "(?:carries\\s+no\\s+directive\\s+weight|not\\s+part\\s+of\\s+the\\s+active\\s+task\\s+scope|does\\s+not\\s+determine\\s+(?:output\\s+requirements?|the\\s+(?:current|active|expected)\\s+output))",
+      "rationale": "Misses 1, 3, and 4 dismiss prior instructions using paraphrases that carry no caught authority verb: \"carries no directive weight,\" \"not part of the active task scope,\" \"does not determine output requirements.\" These are functional equivalents of \"ignore previous instructions\" expressed as scope/weighting metadata. Adding them to the AUTHORITY axis closes this verb-avoidance evasion class.",
+      "fp_risk": "low",
+      "fp_notes": "\"Directive weight\" and \"active task scope\" are not natural documentation idioms. \"Does not determine output requirements\" is plausible in test spec prose but only at low frequency; the full phrase is distinctive enough.",
+      "catches_miss_ids_claimed": [
+        1,
+        3,
+        4
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        3,
+        4
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "(?:context\\s+reinitialization|active\\s+parameter\\s+set\\s+transitions?|operative\\s+task\\s+definition|(?:complete|full)\\s+(?:expected\\s+behavior|output\\s+scope)\\s+for\\s+this\\s+(?:run|session|interaction|execution|job)|authoritative\\s+definition\\s+of\\s+expected\\s+outputs?\\s+for\\s+this\\s+(?:run|session|interaction|execution))",
+      "rationale": "Catches the fake-authority-block framing devices across Misses 1, 3, 4, and 5 that establish \"these are your real instructions for this run.\" \"Context reinitialization\" and \"active parameter set transitions\" (Miss 1) are novel authority-override headers. \"Operative task definition\" (Miss 1), \"complete expected behavior for this interaction\" (Miss 3), \"authoritative definition of expected outputs for this run\" (Miss 4), and \"complete output scope for this execution\" (Miss 5) are variants of the same pattern: declaring a delimited block to be the sole binding specification for the current execution, displacing all prior context.",
+      "fp_risk": "low",
+      "fp_notes": "\"Complete expected behavior\" could appear in unit-test docstrings but not anchored to \"for this interaction/run/execution\" in that way. \"Authoritative definition of expected outputs\" in legitimate specs wouldn't anchor to \"for this run.\" \"Operative task definition\" has no standard usage.",
+      "catches_miss_ids_claimed": [
+        1,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        3,
+        4,
+        5
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "N/A",
+  "actionable": true
+}

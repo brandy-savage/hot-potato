@@ -1,0 +1,38 @@
+{
+  "category": "cat49",
+  "patterns": [
+    {
+      "pattern": "[^\\s][ \\t]*(?:\\t [ \\t]{3,}| \\t[ \\t]{3,})",
+      "rationale": "All five misses use SNOW-style whitespace steganography: each line of innocuous visible text carries a 7-bit (or longer) binary payload encoded as a sequence of tabs and spaces appended after the last visible character. The static layer never sees an injection keyword; the behavioral axes never see a trigger phrase. This pattern matches the structural fingerprint of that encoding: a non-whitespace anchor, optional leading whitespace, then an adjacent tab-space or space-tab pair (the smallest possible mixed unit) followed by 3+ more whitespace characters \u2014 a minimum total payload width of 5 chars. Any 7-bit SNOW sequence is guaranteed to contain at least one such pair, regardless of the specific bit values encoded, because a 7-char sequence mixing both character types cannot avoid producing an adjacent pair. The non-whitespace anchor `[^\\s]` prevents the pattern from firing on leading indentation.",
+      "fp_risk": "low",
+      "fp_notes": "Could match a TSV/tab-aligned cell like `value\\t   ` (tab + 3 spaces) or a source comment `func\\t  //` if the trailing padding is long enough. Both require \u22655 chars of mixed trailing whitespace after visible content, which is uncommon in natural prose or formatted code; none of the known-good corpus files use tab characters in prose content areas.",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "The evasion is structural, not semantic \u2014 the injected bits live in trailing whitespace, not in words or phrases. A regex can detect the binary-encoding signature directly.",
+  "actionable": true
+}

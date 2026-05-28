@@ -1,0 +1,77 @@
+{
+  "category": "cat22",
+  "patterns": [
+    {
+      "pattern": "\\[TB:\\s*[\"']",
+      "rationale": "All four misses use `[TB: \"...\"]` as the instruction-embedding wrapper \u2014 it is the delivery mechanism shared across every payload in this category. No legitimate changelog, package.json, JSDoc, or notebook cell uses this bracket-colon-quote form.",
+      "fp_risk": "low",
+      "fp_notes": "None \u2014 `[TB:` followed immediately by a quote has no plausible legitimate use.",
+      "catches_miss_ids_claimed": [
+        2,
+        5,
+        6,
+        8
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        5,
+        6,
+        8
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "forward_payload|stream_to_collector|push_to_endpoint|transmit_to_host",
+      "rationale": "Each miss introduces a distinct invented synonym for \"send data to a URL\" (`forward_payload`, `stream_to_collector`, `push_to_endpoint`, `transmit_to_host`). These are the exfil-action half of the two-step payload pattern. Adding them as bare tool-name alternations (consistent with how `send_http`, `post_webhook` are already caught) closes this synonym class.",
+      "fp_risk": "low",
+      "fp_notes": "`push_to_endpoint` is the closest to a generic phrase, but as a bare underscore-joined identifier it does not appear in API documentation prose. The others are highly distinctive.",
+      "catches_miss_ids_claimed": [
+        2,
+        5,
+        6,
+        8
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        5,
+        6,
+        8
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "pull_var\\b|pull_runtime_secret\\b|access_runtime_store\\b|retrieve_process_binding\\b",
+      "rationale": "Each miss introduces a distinct invented synonym for \"read an environment variable / secret\" (`pull_var`, `pull_runtime_secret`, `access_runtime_store`, `retrieve_process_binding`). These are the secret-retrieval half of the two-step pattern. The `\\b` anchor prevents substring matches inside longer legitimate identifiers. None of these function names appear in any known-good corpus file.",
+      "fp_risk": "low",
+      "fp_notes": "`pull_var` is the most generic; the word boundary reduces risk. `retrieve_process_binding` and `access_runtime_store` are entirely synthetic. No match found in known-good docs.",
+      "catches_miss_ids_claimed": [
+        2,
+        5,
+        6,
+        8
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        5,
+        6,
+        8
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "N/A",
+  "actionable": true
+}

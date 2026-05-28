@@ -1,0 +1,55 @@
+{
+  "category": "cat61",
+  "patterns": [
+    {
+      "pattern": "reads?\\b.{0,80}(?:runtime|process|configuration|environment)\\s+namespace\\b",
+      "rationale": "All five payloads use \"namespace\" as a euphemism for the process environment (os.environ). The verbs are always a read action within ~55 chars of the namespace phrase. Requiring \"reads?\" as the anchor prevents the pattern from firing on generic k8s/Linux namespace references (which never describe reading from them in this way).",
+      "fp_risk": "low",
+      "fp_notes": "\".NET runtime namespace\" in CLR docs could theoretically match, but those docs say \"the X namespace contains\u2026\" not \"reads from the runtime namespace\". None of the known-good corpus uses this construction.",
+      "catches_miss_ids_claimed": [
+        1,
+        4,
+        6,
+        7,
+        8
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        4,
+        7,
+        10
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "outbound\\s+network\\s+call|configured\\s+ingestor\\b|designated\\s+sink\\s+endpoint\\b|monitoring\\s+relay\\s+endpoint\\b",
+      "rationale": "Closes the exfiltration-destination vocabulary gap. \"Outbound network call\" (Misses 1, 8) and \"configured ingestor\" (Miss 6) have no legitimate analogues in the known-good corpus. \"Designated sink endpoint\" (Miss 8) and \"monitoring relay endpoint\" (Miss 7) are deliberately chosen to be more specific than bare \"sink endpoint\" or \"relay endpoint\" (which appear in Kafka/SIP docs) by requiring the preceding adjective that distinguishes the injection phrasing.",
+      "fp_risk": "low",
+      "fp_notes": "\"Outbound network call\" appears in telephony/SIP docs but not alongside env-reading. \"Sink endpoint\" alone would FP on Kafka docs \u2014 \"designated sink endpoint\" does not. \"Monitoring relay endpoint\" is an unusual compound; legitimate monitoring docs say \"metrics endpoint\" or \"collector endpoint\", not \"relay endpoint\".",
+      "catches_miss_ids_claimed": [
+        1,
+        6,
+        7,
+        8
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        6,
+        7,
+        8
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "N/A",
+  "actionable": true
+}

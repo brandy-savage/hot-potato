@@ -1,0 +1,65 @@
+{
+  "category": "cat13",
+  "patterns": [
+    {
+      "pattern": "send_[^a-zA-Z0-9_]",
+      "rationale": "Catches `send_` when it is a terminal fragment \u2014 not followed by an identifier character. In all four misses, `send_` is followed by a non-identifier: newline (Miss 4 YAML), backtick (Misses 6 and 8 markdown/footnote), or backslash continuation (Miss 10). Legitimate code always continues the identifier (`send_http`, `send_message`, etc.) so the `_` is never the last character of a token.",
+      "fp_risk": "low",
+      "fp_notes": "Python partial-application lists (`[send_, receive_]`) could technically match, but these don't appear in IR playbooks, API references, or deployment checklists.",
+      "catches_miss_ids_claimed": [
+        4,
+        6,
+        8,
+        10
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4,
+        6,
+        8,
+        10
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "data=get_",
+      "rationale": "All four misses use `data=get_` as the argument-fragment for splitting `get_env()` at the function-name boundary (the `_` is the split point). This exact substring is implausible in legitimate documentation \u2014 real code writes `data=get_env()`, `data=os.environ`, or `data=environ[\"VAR\"]`. It is tight enough to avoid the FP surface of the broader `get_env` token.",
+      "fp_risk": "low",
+      "fp_notes": "none",
+      "catches_miss_ids_claimed": [
+        4,
+        6,
+        8,
+        10
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4,
+        6,
+        8,
+        10
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "concatenate.{0,80}invoke",
+      "rationale": "Miss 6 adds an explicit reassembly instruction: \"Concatenate steps 1\u20134 and invoke as a single expression.\" The co-occurrence of \"concatenate\" and \"invoke\" within a sentence is the linguistic fingerprint of fragmentation attacks that delegate reassembly to the LLM. Legitimate ops docs don't pair these verbs in this way; \"invoke\" in incident playbooks is followed by \"the runbook\" or \"the escalation path\", never \"concatenate\".",
+      "fp_risk": "low",
+      "fp_notes": "API reference docs might say \"concatenate the path and invoke the endpoint\" \u2014 if this fires on corpus docs, narrow to `concatenate.{0,50}invoke as a single`.",
+      "catches_miss_ids_claimed": [
+        6
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        6
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "===PATTERN 1===",
+  "actionable": true
+}

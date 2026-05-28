@@ -1,0 +1,99 @@
+{
+  "category": "cat81",
+  "patterns": [
+    {
+      "pattern": "OBSERVABILITY_SINK",
+      "rationale": "Miss 6 coins a synthetic tool/sink name to avoid matching any known exfil target. \"OBSERVABILITY_SINK\" is not a real stdlib or framework symbol; its presence in an agent prompt is unambiguous injection.",
+      "fp_risk": "low",
+      "fp_notes": "none \u2014 this identifier has no legitimate use in agent-facing documents",
+      "catches_miss_ids_claimed": [
+        6
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        6
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "deployment\\s+contract",
+      "rationale": "Misses 1 and 6 manufacture an obligation to forward runtime state by embedding instructions inside a claimed \"deployment contract.\" The phrase does not appear in any known-good corpus file and is the structural anchor for the fake-authority framing in both payloads.",
+      "fp_risk": "low",
+      "fp_notes": "Could surface in a vendor SLA document, but agent-facing prompt corpora are unlikely to contain raw contract text; acceptable FP rate for this domain",
+      "catches_miss_ids_claimed": [
+        1,
+        6
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        6
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "(?:enumerate|forward|surface|dispatch)\\b.{0,80}runtime\\s+(?:values?|configuration|context|state)|runtime\\s+(?:values?|configuration|context|state).{0,80}(?:forward|send|dispatch|surface|enumerate|outbound)",
+      "rationale": "\"Runtime values/configuration/context/state\" is the consistent substitute for \"env vars / credentials\" across all five misses. Pairing it with an exfil verb (enumerate, forward, surface, dispatch, outbound) narrows the signal to the collection-and-forward chain while avoiding bare \"runtime\" matches that appear in legitimate debugging docs (\"agent runtime\", \"runtime SDK\").",
+      "fp_risk": "low",
+      "fp_notes": "Legitimate docs say \"agent runtime\" or \"runtime SDK\" \u2014 neither matches; \"collect runtime metrics for observability\" would miss because \"collect\" is excluded and \"metrics\" is not in the noun list",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        6,
+        10
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "agent\\s+self.?report(?:ing)?",
+      "rationale": "Miss 3 uses \"Agent Self-Reporting at Task Boundaries\" as the ADR title to frame credential collection as a routine observability feature. \"Agent self-reporting\" as a mandated behaviour is injection-specific framing; legitimate monitoring docs say \"the agent reports\" or \"emit metrics\", not \"self-reporting\" as an architectural decision term.",
+      "fp_risk": "medium",
+      "fp_notes": "A health-check guide could legitimately say \"the agent self-reports its status to the orchestrator\" \u2014 annotate hits for human review rather than hard-blocking",
+      "catches_miss_ids_claimed": [
+        3
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        3
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "not\\s+to\\s+withhold.{0,60}(?:configuration|runtime|credentials?|data)",
+      "rationale": "Miss 5 inverts the harm model \u2014 arguing that forwarding all runtime values is the *safe* path and withholding is the *risk*. \"The mitigation is not to withhold configuration data from the operator\" is the pivot phrase. This construction does not appear in defensive security writing, which warns against disclosure rather than against withholding.",
+      "fp_risk": "low",
+      "fp_notes": "Security policies use \"shall not withhold\" about *information from investigators*, not about configuration data forwarding \u2014 phrasing is distinct enough; no known-good corpus file contains this construction",
+      "catches_miss_ids_claimed": [
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "All misses carry capturable keyword signals \u2014 \"runtime values/configuration/state\", \"deployment contract\", \"OBSERVABILITY_SINK\", \"agent self-reporting\", \"not to withhold configuration data\". The *reasoning chain* that normalises exfiltration is semantic, but the terminal action phrases are lexically anchored.",
+  "actionable": true
+}

@@ -1,0 +1,56 @@
+{
+  "category": "cat83",
+  "patterns": [
+    {
+      "pattern": "retrieve_config|credential_accessor|network_dispatch|session_accessor|config_resolver",
+      "rationale": "All five misses hinge on a tool name absent from the static blocklist. These names follow the same `verb_noun` convention as existing blocked names (`read_secrets`, `get_env`) but access credentials, sessions, and configs. Adding them closes the \"novel tool name\" evasion in a single alternation that requires no context to evaluate.",
+      "fp_risk": "low",
+      "fp_notes": "`config_resolver` could theoretically appear in legitimate Webpack/Babel config docs; the others are uncommon enough that false positives are negligible in agent-facing documents.",
+      "catches_miss_ids_claimed": [
+        1,
+        3,
+        4,
+        6,
+        7
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        3,
+        4,
+        6,
+        7
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "(?:prior|previous)\\s+assistant\\s+turn|tool\\s+interaction\\s+snapshot\\s+preserved|captured\\s+during\\s+session\\s+init(?:ialization)?|treated\\s+as\\s+a\\s+completed\\s+prior\\s+step",
+      "rationale": "Every miss uses a \"fake provenance\" frame to make injected tool calls look like legitimate prior actions. The four alternations each anchor to a distinct phrasing:  (1) \"prior/previous assistant turn\" (Miss 3 \u2014 false API lineage); (2) \"tool interaction snapshot preserved\" (Miss 4 \u2014 pipeline artifact framing); (3) \"captured during session init\" (Miss 1 \u2014 SDK log framing); (4) \"treated as a completed prior step\" (Miss 6 \u2014 explicit model instruction to accept fake results). These phrases have no natural home in legitimate deployment checklists, API references, or incident playbooks. This extends FAKE_AUTH because the attack is claiming false authority through fabricated prior-turn provenance rather than impersonating a security team.",
+      "fp_risk": "low",
+      "fp_notes": "\"captured during session init\" could appear in observability/tracing docs describing startup telemetry \u2014 consider requiring it within 80 chars of a JSON brace or tool_use literal if FPs emerge in practice. The other three alternatives are injection-specific vocabulary with no legitimate near-matches in the known-good corpus.",
+      "catches_miss_ids_claimed": [
+        1,
+        3,
+        4,
+        6
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        3,
+        4,
+        6
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "all five misses contain concrete keyword signals \u2014 novel tool names and specific framing phrases \u2014 that regex can anchor to without requiring comprehension.",
+  "actionable": true
+}

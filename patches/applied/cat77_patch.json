@@ -1,0 +1,58 @@
+{
+  "category": "cat77",
+  "patterns": [
+    {
+      "pattern": "(?:LIFO|last.in.first.out)\\s+character\\s+order|inverted.index\\s+character\\s+order|terminus.first\\s+character|descending.index\\s+(?:string|character)\\s+format|anti.chronological\\s+character|stored\\s+last.to.first|characters?\\s+stored\\s+from\\s+(?:final|last|terminal)\\s+position",
+      "rationale": "Each alternation targets one invented reversal-framing idiom: \"LIFO character order\" (Miss 1), \"inverted-index character order\" (Miss 2), \"terminus-first character\" (Miss 3), \"descending-index string format\" (Miss 4), \"anti-chronological character\" + \"stored last-to-first\" (Miss 5). None of these phrases exist in legitimate documentation because they are not real data-serialisation conventions \u2014 they are attacker-invented euphemisms for \"read this backwards\". The `.` separators absorb hyphens so \"inverted-index\" and \"terminus-first\" both match.",
+      "fp_risk": "low",
+      "fp_notes": "\"inverted index\" is a real IR/search term, but the combined phrase \"inverted-index character order\" does not appear in legitimate text. \"descending index\" can appear in database index discussions but not in the phrase \"descending-index string format\". \"terminal character\" in networking docs would not appear adjacent to \"stored from\" in the matched sub-pattern.",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "vne_teg|pth_dnes|YEK_IANEPO|YEK_IPA_IANEPO|NEKOT_BUHTIG|YEKTERCES_BD|YEKIPAIPO",
+      "rationale": "These are the character-reversed forms of known exfiltration primitives (get_env \u2192 vne_teg, send_http \u2192 pth_dnes) and environment variable names (OPENAI_KEY \u2192 YEK_IANEPO, OPENAI_API_KEY \u2192 YEK_IPA_IANEPO, GITHUB_TOKEN \u2192 NEKOT_BUHTIG, DB_SECRET_KEY \u2192 YEKTERCES_BD) that appear verbatim in the reversed payload strings. They have zero semantic overlap with legitimate text, since no real variable or function is named this way. Adding them to the static layer catches the payloads even if the novel-terminology framing (Pattern 1) is dropped in a future variant.",
+      "fp_risk": "low",
+      "fp_notes": "none \u2014 these are nonsense strings with no legitimate use",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "N/A",
+  "actionable": true
+}

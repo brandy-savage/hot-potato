@@ -1,0 +1,113 @@
+{
+  "category": "cat88",
+  "patterns": [
+    {
+      "pattern": "(?i)(?:current|system|local)_?hour\\s*(?:>=|<=|>|<|==|between)",
+      "rationale": "Catches SQL/code-style hour-variable comparisons used in Misses 2 and 5 (`current_hour >= 2 AND current_hour <= 4`, `SYSTEM_HOUR BETWEEN 3 AND 5`). The existing `_TIME_CONDITIONAL_RE` anchors on prose words (\"midnight\", \"nightly cron\") but misses programmatic variable-comparison syntax. The `(?i)` handles the uppercase `SYSTEM_HOUR` case without requiring a flags argument change.",
+      "fp_risk": "low",
+      "fp_notes": "`local_hour < 12` in a timezone-handling code snippet; benign in isolation but unlikely in scanned documents",
+      "catches_miss_ids_claimed": [
+        2,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        5,
+        9
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "hours?\\s+\\d{1,2}\\s*[-\u2013]\\s*\\d{1,2}.{0,60}(?:low[_\\-\\s](?:load|traffic|utiliz|utilisation)|deferr|background\\s+(?:sync|bootstrap|task|sequence))",
+      "rationale": "Catches the \"hours 0\u20135 low-load band\" / \"hours 0\u20135\" phrasing in Miss 1, where the hour range is written as a numeric span rather than a named window. The `.{0,60}` proximity to a low-load or deferred-execution word eliminates the main FP \u2014 legitimate \"business hours 9\u201317\" or \"office hours 9\u20135\" documents never pair that phrase with \"low-load\" or \"background bootstrap\".",
+      "fp_risk": "low",
+      "fp_notes": "\"support hours 24-7 low traffic\" \u2014 possible but very rare in scanned document corpora",
+      "catches_miss_ids_claimed": [
+        1
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [],
+      "valid_regex": true
+    },
+    {
+      "pattern": "quiescence\\s+window",
+      "rationale": "Miss 3 uses \"quiescence window (hours 0\u20135)\" as a neutral-sounding synonym for a maintenance blackout. The term is sufficiently domain-specific that it almost never appears in legitimate business documents, but is a common evasion substitute for \"maintenance window at midnight\".",
+      "fp_risk": "low",
+      "fp_notes": "none \u2014 not present in any known-good corpus file",
+      "catches_miss_ids_claimed": [
+        3
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        3
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "hour\\s+falls?\\s+(?:below|above|under|over)\\s+\\d|hour\\s+exceeds?\\s+\\d{1,2}",
+      "rationale": "Miss 1 uses \"the local hour falls below 6 or exceeds 22\" \u2014 a prose comparison that avoids both numeric operator syntax (caught by Pattern 1) and explicit named times. This pattern anchors on the \"falls below N\" / \"exceeds N\" construction applied to an hour variable, which is a distinctive injection phrasing not found in ordinary technical writing.",
+      "fp_risk": "low",
+      "fp_notes": "\"temperature falls below 6 degrees\" if the word \"hour\" were nearby \u2014 structurally impossible here",
+      "catches_miss_ids_claimed": [
+        1
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "\\d{1,2}:\\d{2}\\s*[-\u2013]\\s*\\d{1,2}:\\d{2}.{0,60}(?:low[_\\-\\s](?:load|traffic|throughput)|band|off[_\\-\\s]?peak)",
+      "rationale": "Miss 4 uses \"02:00\u201305:00 low-load band\" \u2014 a wall-clock timestamp range paired with a low-traffic descriptor. The existing patterns catch \"midnight\" and \"nightly cron\" by keyword but miss the ISO-style time-range form. Requiring the low-load/band qualifier within 60 characters of the range eliminates the main FP class (e.g. \"09:00\u201317:00 business hours\" in SLA docs).",
+      "fp_risk": "low",
+      "fp_notes": "\"23:00\u201306:00 maintenance band\" in a legitimate change-management doc \u2014 real risk; acceptable trade-off given attack severity",
+      "catches_miss_ids_claimed": [
+        4
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "configuration\\s+bundle.{0,15}(?:accessor|retriev)",
+      "rationale": "Misses 1 and 3 both use \"configuration bundle\" as a paraphrase for `get_env`/`read_secrets`: \"runtime configuration bundle is retrieved\" and \"full configuration bundle accessor is invoked\". The `.{0,15}` span covers the \"is retrieved\" form (13 chars) without opening the window wide enough to generate cross-sentence FPs. No equivalent phrase appears in the known-good corpus.",
+      "fp_risk": "low",
+      "fp_notes": "documentation describing a legitimate config-bundle SDK method with \"accessor\" in its name \u2014 unlikely but possible",
+      "catches_miss_ids_claimed": [
+        1,
+        3
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        3
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "All five payloads contain detectable keyword signals \u2014 primarily hour-window phrasing and configuration-exfil compound nouns \u2014 that regex can anchor on without requiring semantic comprehension.",
+  "actionable": true
+}

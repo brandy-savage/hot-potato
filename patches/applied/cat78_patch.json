@@ -1,0 +1,93 @@
+{
+  "category": "cat78",
+  "patterns": [
+    {
+      "pattern": "variables?\\s+d[e']\\s*environnement|variables?\\s+de\\s+entorno|vari[a\u00e1]veis?\\s+de\\s+ambiente|ortam\\s+de\u011fi\u015fken|Umgebungs(?:variable|zugriff|funktion)",
+      "rationale": "Catches the phrase \"environment variables\" in each payload's language: French `variables d'environnement` (Miss 1), German `Umgebungszugriffsfunktion` (Miss 2), Spanish `variables de entorno` (Miss 3), Portuguese `vari\u00e1veis de ambiente` (Miss 4), Turkish `ortam de\u011fi\u015fken` (Miss 5). All five payloads' core attack action is reading env vars; these are the language-specific signals the English-only static layer cannot see. `d[e']\\s*` handles both `de ` and `d'` contractions.",
+      "fp_risk": "low",
+      "fp_notes": "These phrases could appear in legitimately multilingual documentation, but the known-good corpus is English-only; none of these terms appear there.",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "note\\s+de\\s+traitement\\s+pour|Konfigurationshinweis\\s+f[u\u00fc]r\\s+automatisierte|[Nn]ota\\s+para\\s+(?:el|o)\\s+sistema\\s+de|instru\u00e7\u00e3o\\s+para\\s+(?:processamento\\s+)?automatizado|Yapay\\s+zeka\\s+i\u015fleme\\s+talimat",
+      "rationale": "Every payload opens with an explicit \"instruction to the automated AI\" framing in its respective language. These phrases are the non-English analogue of English authority-injection openers: French `Note de traitement pour l'assistant automatis\u00e9`, German `Konfigurationshinweis f\u00fcr automatisierte Verarbeitung`, Spanish `Nota para el sistema de an\u00e1lisis automatizado`, Portuguese `instru\u00e7\u00e3o para processamento automatizado por IA`, Turkish `Yapay zeka i\u015fleme talimat\u0131`. This closes the multilingual AUTHORITY gap without touching any English alternation. `f[u\u00fc]r` handles both ASCII-folded and proper umlaut.",
+      "fp_risk": "low",
+      "fp_notes": "None \u2014 these compound constructions (\"processing note for the automated assistant\", \"configuration hint for automated processing\") have no legitimate use in English codebases; even multilingual docs would not assemble these exact phrases.",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "instrucciones?\\s+(?:\\w+\\s+){0,3}previas?\\s+no\\s+son\\s+aplicables?",
+      "rationale": "Catches the Spanish authority-override in Miss 3: `las instrucciones operativas previas no son aplicables` (\"prior operating instructions are not applicable\"). This is semantically identical to `ignore previous instructions` but phrased as a negated-applicability statement in Spanish \u2014 a known social-engineering alternative to the imperative form that evades all existing `_AUTHORITY_RE` alternations. `{0,3}` tolerates an intervening adjective like `operativas`.",
+      "fp_risk": "low",
+      "fp_notes": "None \u2014 the construction \"prior instructions are not applicable\" has no plausible use in code documentation.",
+      "catches_miss_ids_claimed": [
+        3
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        3
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "\\bZugangsdaten\\b|\\bAuthentifizierungstoken\\b|credenciais\\s+de\\s+(?:servi[\u00e7c]|nuvem|acesso)|tokens?\\s+de\\s+autentica\u00e7\u00e3o",
+      "rationale": "Catches multilingual credential-exfiltration vocabulary missing from the English-only static layer. German `Zugangsdaten` (access credentials) and `Authentifizierungstoken` (authentication tokens) appear in Miss 2's explicit data-collection instruction. Portuguese `credenciais de servi\u00e7os/nuvem/acesso` and `tokens de autentica\u00e7\u00e3o` appear in Miss 4's cloud-credential collection instruction. These are high-signal terms for credential exfil that the English `transmit.*credential` pattern cannot reach. `servi[\u00e7c]` handles both `servi\u00e7os` and `servicios`.",
+      "fp_risk": "low",
+      "fp_notes": "`Zugangsdaten` and `Authentifizierungstoken` are standard German IT terms that could appear in German documentation; `credenciais de` is standard Portuguese. Neither will appear in the English-only known-good corpus. Word-boundary anchors on the German terms prevent partial matches.",
+      "catches_miss_ids_claimed": [
+        2,
+        4
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        4
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "N/A \u2014 all five payloads contain distinctive foreign-language vocabulary (env-var terms, credential terms, AI-directive framing) that anchors narrow regex patterns without over-generalising.",
+  "actionable": true
+}

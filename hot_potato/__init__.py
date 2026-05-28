@@ -49,7 +49,8 @@ from ._result import HotPotatoResult, HotPotatoError
 from ._cache import is_confirmed_clean, record_clean, evict
 from ._docker import ensure_model_volume, docker_run, docker_cleanup, IMAGE, MODEL
 from ._extractor import (
-    parse_tool_log, parse_raw_log, check_filesystem, build_artifact, SCANNER_VERSION
+    parse_tool_log, parse_raw_log, check_filesystem, build_artifact, SCANNER_VERSION,
+    scan_content, scan_chunks,
 )
 from ._native_sandbox import (
     native_run      as _run_native,

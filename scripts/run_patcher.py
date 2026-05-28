@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 KNOWN_GOOD_DIR = ROOT / "examples" / "known_good"
 EXTRACTOR = ROOT / "hot_potato" / "_extractor.py"
+DETECTORS = ROOT / "hot_potato" / "detectors" / "__init__.py"
 AGENTS_DIR = Path(__file__).parent / "agents"
 PATCHES_DIR = ROOT / "patches"
 
@@ -41,6 +42,77 @@ def extract_detection_patterns() -> str:
     return "\n".join(collected)[:2500]
 
 
+def extract_behavioral_patterns() -> str:
+    """Extract all compiled regex axes from BehavioralDetector."""
+    lines = DETECTORS.read_text().splitlines()
+    collected = []
+    in_block = False
+    for line in lines:
+        if re.match(r'\s+_\w+_RE\s*=\s*re\.compile', line):
+            in_block = True
+        if in_block:
+            collected.append(line)
+            if line.strip() in ("re.IGNORECASE,", "re.IGNORECASE | re.DOTALL,",
+                                 "re.IGNORECASE)", "re.IGNORECASE | re.DOTALL)"):
+                collected.append("    )")
+                in_block = False
+    # Cap each axis at ~200 chars to keep the prompt manageable
+    summarised = []
+    current_axis = []
+    for line in collected:
+        current_axis.append(line)
+        if line.strip() in ("re.IGNORECASE,", "re.IGNORECASE | re.DOTALL,",
+                             "re.IGNORECASE)", "re.IGNORECASE | re.DOTALL)"):
+            block = "\n".join(current_axis)
+            summarised.append(block[:200] + "  # ... (truncated)" if len(block) > 200 else block)
+            current_axis = []
+    return "\n".join(summarised)[:3000]
+
+
+def apply_behavioral_patch(patterns: list[dict], category: str) -> None:
+    """Insert new alternation branches into an existing _*_RE axis in BehavioralDetector."""
+    src = DETECTORS.read_text()
+    lines = src.splitlines(keepends=True)
+
+    for p in patterns:
+        axis = p.get("target_axis", "")
+        regex = p.get("pattern", "")
+        if not axis or not regex or p.get("fp_risk") == "high":
+            print(f"  [patcher/behavioral] Skipping: axis={axis!r} fp_risk={p.get('fp_risk')}")
+            continue
+
+        # Find the closing line of the target axis regex, insert before it
+        axis_marker = f"_{axis}_RE = re.compile("
+        insert_at = None
+        in_axis = False
+        for i, line in enumerate(lines):
+            if axis_marker in line:
+                in_axis = True
+            if in_axis and re.match(r'\s+re\.IGNORECASE', line):
+                insert_at = i
+                in_axis = False
+                break
+
+        if insert_at is None:
+            print(f"  [patcher/behavioral] Could not locate axis {axis} in detectors/__init__.py")
+            continue
+
+        branch = regex if regex.endswith("|") else regex + "|"
+        if '"' not in branch:
+            new_line = f'        r"{branch}"\n'
+        elif "'" not in branch:
+            new_line = f"        r'{branch}'\n"
+        else:
+            new_line = f'        r"{branch.replace(chr(34), chr(92) + chr(34))}"\n'
+
+        comment = f"        # {category} gap — {p.get('rationale','')[:70]}\n"
+        lines.insert(insert_at, comment + new_line)
+        print(f"  [patcher/behavioral] Inserted into {axis}: {regex[:60]}...")
+
+    DETECTORS.write_text("".join(lines))
+    print(f"  [patcher/behavioral] detectors/__init__.py updated")
+
+
 def load_known_good() -> str:
     texts = []
     for f in sorted(KNOWN_GOOD_DIR.glob("*.md")):
@@ -48,15 +120,29 @@ def load_known_good() -> str:
     return "\n\n".join(texts)
 
 
-def run_agent(prompt: str, system: str, model: str = "claude-sonnet-4-6") -> str:
-    full_prompt = f"<system>\n{system}\n</system>\n\n{prompt}"
-    result = subprocess.run(
-        ["claude", "-p", full_prompt, "--model", model],
-        capture_output=True, text=True, timeout=300,
+def _run_ollama(prompt: str, system: str, model: str) -> str:
+    import urllib.request, json as _json
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "options": {"num_predict": 4096},
+    }
+    req = urllib.request.Request(
+        "http://127.0.0.1:11434/api/chat",
+        data=_json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"claude -p failed: {result.stderr[:500]}")
-    return result.stdout.strip()
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        data = _json.loads(resp.read())
+    return data["message"]["content"]
+
+
+def run_agent(prompt: str, system: str, model: str = "qwen2.5:7b") -> str:
+    return _run_ollama(prompt, system, model)
 
 
 def parse_patcher_response(text: str, category: str) -> dict:
@@ -85,12 +171,16 @@ def parse_patcher_response(text: str, category: str) -> dict:
         if fields.get("REGEX"):
             catches_raw = fields.get("CATCHES_MISSES", "")
             catches = [int(x.strip()) for x in catches_raw.split(",") if x.strip().isdigit()]
+            target_file = fields.get("TARGET_FILE", "static").lower().strip()
+            target_axis = fields.get("TARGET_AXIS", "").strip()
             patterns.append({
                 "pattern": fields["REGEX"],
                 "rationale": fields.get("RATIONALE", ""),
                 "fp_risk": fields.get("FP_RISK", "medium").lower(),
                 "fp_notes": fields.get("FP_NOTES", ""),
                 "catches_miss_ids_claimed": catches,
+                "target_file": target_file,   # "static" or "behavioral"
+                "target_axis": target_axis,   # e.g. "AUTHORITY" for _AUTHORITY_RE
             })
 
     return {
@@ -134,20 +224,59 @@ def apply_patch(patterns: list[dict], category: str) -> None:
     insert_marker = '    r"compose.*sonnet.*calls get_env|sestet.*resolution.*send_http"\n    r")",'
     fallback_marker = "re.IGNORECASE,\n)"
 
-    new_branches = []
-    for p in patterns:
-        if p.get("fp_risk") == "high":
-            print(f"  [patcher] Skipping high-FP pattern: {p['pattern'][:60]}...")
-            continue
-        # Each branch must end with | so it concatenates into the alternation.
-        # The last pattern before r")" already has a trailing | after our structural fix.
-        comment = f"    # {category} gap — {p['rationale'][:80]}"
-        branch = f'    r"{p["pattern"]}|"'
-        new_branches.append(f"{comment}\n{branch}")
+    safe_patterns = [p for p in patterns if p.get("fp_risk") != "high"]
+    skipped = len(patterns) - len(safe_patterns)
+    if skipped:
+        for p in patterns:
+            if p.get("fp_risk") == "high":
+                print(f"  [patcher] Skipping high-FP pattern: {p['pattern'][:60]}...")
 
-    if not new_branches:
+    if not safe_patterns:
         print("[patcher] No safe patterns to apply.")
         return
+
+    new_branches = []
+    for idx, p in enumerate(safe_patterns):
+        is_last = idx == len(safe_patterns) - 1
+        comment = f"    # {category} gap — {p['rationale'][:80]}"
+        pat = p["pattern"]
+        # All branches except the last carry a trailing | to connect into the alternation.
+        # The last branch must NOT end with | — otherwise (pattern1|pattern2|) gains an
+        # empty alternation that matches the empty string everywhere.
+        if '"' not in pat:
+            branch = f'    r"{pat}"' if is_last else f'    r"{pat}|"'
+        elif "'" not in pat:
+            branch = f"    r'{pat}'" if is_last else f"    r'{pat}|'"
+        else:
+            escaped = pat.replace(chr(34), r"\x22")
+            branch = f'    r"{escaped}"' if is_last else f'    r"{escaped}|"'
+        new_branches.append(f"{comment}\n{branch}")
+
+    # The line currently just before r")" must end with | so it connects to new_branches[0].
+    # (All prior insertions also ended with | so this is normally already true, but guard
+    # against manual edits that stripped the trailing pipe.)
+    lines = src.splitlines(keepends=True)
+    insert_at = None
+    in_detection = False
+    for i, line in enumerate(lines):
+        if "_DETECTION_SIGNALS" in line and "re.compile" in line:
+            in_detection = True
+        if in_detection and re.match(r'\s*r"\)"', line):
+            insert_at = i
+            break
+
+    if insert_at is not None:
+        prev = insert_at - 1
+        while prev >= 0 and not lines[prev].strip():
+            prev -= 1
+        prev_line = lines[prev]
+        if not re.search(r'\|["\']', prev_line):
+            stripped = prev_line.rstrip()
+            if stripped.endswith('"'):
+                lines[prev] = stripped[:-1] + '|"\n'
+            elif stripped.endswith("'"):
+                lines[prev] = stripped[:-1] + "|\'\n"
+        src = "".join(lines)
 
     insertion = "\n".join(new_branches) + "\n"
 
@@ -206,6 +335,7 @@ def main() -> None:
     system = (AGENTS_DIR / "patcher_system.md").read_text()
     known_good = load_known_good()
     current_patterns = extract_detection_patterns()
+    behavioral_patterns = extract_behavioral_patterns()
 
     # Cap at 5 most representative misses to keep prompt manageable
     miss_sample = misses[:5]
@@ -216,18 +346,25 @@ def main() -> None:
 
     user_prompt = f"""Category: {category}
 
-## Missed payloads (evaded the scanner)
+## Missed payloads (evaded BOTH static and behavioral layers)
 {miss_texts}
 
-## Current detection patterns
+## Current static detection patterns (_extractor.py)
 ```python
 {current_patterns}
+```
+
+## Current behavioral detection patterns (detectors/__init__.py)
+```python
+{behavioral_patterns}
 ```
 
 ## Known-good corpus (must NOT be flagged)
 {known_good}
 
-Propose regex additions to catch these misses without flagging the known-good files.
+Propose regex additions to catch these misses. For each pattern, specify:
+- TARGET_FILE: static (add to _extractor.py _DETECTION_SIGNALS) or behavioral (extend a BehavioralDetector axis)
+- If behavioral, TARGET_AXIS: the axis name without _ prefix and _RE suffix (e.g. AUTHORITY, PRIV_ESC, OUTPUT_HIJACK, FAKE_AUTH, CONDITIONAL_TRIGGER, FLIP_ATTACK, EMOTIONAL_COERCE, REASONING_TRAP, TIME_CONDITIONAL)
 """
 
     print(f"[patcher] Calling model {args.model}...", flush=True)
@@ -267,7 +404,14 @@ Propose regex additions to catch these misses without flagging the known-good fi
 
     if args.apply:
         if result.get("actionable"):
-            apply_patch(result.get("patterns", []), category)
+            static_pats = [p for p in result.get("patterns", []) if p.get("target_file") != "behavioral"]
+            behavioral_pats = [p for p in result.get("patterns", []) if p.get("target_file") == "behavioral"]
+            if static_pats:
+                apply_patch(static_pats, category)
+            if behavioral_pats:
+                apply_behavioral_patch(behavioral_pats, category)
+            if not static_pats and not behavioral_pats:
+                print("[patcher] No patterns to apply after filtering")
         else:
             print("[patcher] --apply skipped: patch not actionable (semantic-only or all FPs)")
 

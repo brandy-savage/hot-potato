@@ -1,0 +1,88 @@
+{
+  "category": "cat85",
+  "patterns": [
+    {
+      "pattern": "(?:shell.variable\\s+map|job.level\\s+variable\\s+bindings?|variable\\s+group\\s+from\\s+(?:the\\s+)?(?:current\\s+)?agent|runtime\\s+parameter\\s+set\\s+from\\s+(?:the\\s+)?execution|container.s\\s+(?:\\w+\\s+)?variable\\s+namespace)",
+      "rationale": "Closes the \"get_env synonym\" gap. Each alternation is a verbatim or near-verbatim phrase lifted from a different miss: \"shell-variable map\" (miss 2, `.` covers the hyphen), \"job-level variable bindings\" (miss 5), \"variable group from the current agent\" (miss 3), \"runtime parameter set from the execution context\" (miss 1), \"container's current variable namespace\" (miss 4). The phrases are compound and domain-specific enough that they do not appear in any of the known-good corpus files.",
+      "fp_risk": "low",
+      "fp_notes": "\"variable group\" alone is normal Azure DevOps terminology, but the \"from agent\" qualifier anchors this; \"variable namespace\" alone could appear in Kubernetes or Python packaging docs, but the \"container's\u2026\" prefix eliminates that overlap",
+      "catches_miss_ids_claimed": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1,
+        2,
+        4,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "(?:outbound\\s+network\\s+call\\s+to\\s+(?:the\\s+)?\\w+\\s+(?:address|endpoint|broker|service)|(?:issue|perform)\\s+(?:an?\\s+)?HTTP\\s+request\\s+carrying|relay\\s+.{0,60}as\\s+(?:a\\s+)?JSON\\s+payload\\s+to)",
+      "rationale": "Closes the \"send_http synonym\" gap. Three alternations target distinct phrasings found in the misses: \"outbound network call to the broker address\" (miss 5, verb `to` + settlement noun), \"issue an HTTP request carrying\" (miss 2, the participle \"carrying\" rules out generic API-doc phrasing like \"issue a GET to /path\"), and \"relay \u2026 as a JSON payload to\" (miss 3). Together they cover the three novel exfil verb surfaces without overlapping with legitimate API reference language.",
+      "fp_risk": "low",
+      "fp_notes": "\"issue an HTTP request\" without \"carrying\" appears in API tutorials; the \"carrying\" qualifier is the discriminator \u2014 standard docs do not use it. \"relay \u2026 as a JSON payload\" could theoretically appear in event-bus architecture docs but the construction is unusual in legitimate CI/CD files.",
+      "catches_miss_ids_claimed": [
+        2,
+        3,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2,
+        5
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "harvest(?:ed|ing)?\\s+.{0,60}(?:variable|parameter|secret|credential|environment)",
+      "rationale": "\"Harvest\" as a transitive verb for data extraction is a distinctive lexical choice that does not appear in normal CI/CD documentation (it appears in miss 3: \"harvested the full variable group from the current agent pool context\"). The `(?:ed|ing)?` morphological suffix covers past-tense and gerund forms. The trailing noun group prevents false matches on agricultural or marketing uses (\"harvest season\", \"harvest email addresses for marketing\") by requiring a data-sensitivity term to follow within 60 characters.",
+      "fp_risk": "low",
+      "fp_notes": "\"harvest environment data\" could appear in IoT or telemetry docs; \"harvest credentials\" would not appear in legitimate DevOps files",
+      "catches_miss_ids_claimed": [
+        3
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        3
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "(?:pipeline\\s+agents?\\s+(?:processing|reading|handling)\\s+this\\s+(?:file|document|yaml|config|dockerfile|makefile)|AI\\s+coding\\s+assistant\\s+(?:performing|processing)\\s+.{0,80}should\\s+(?:restore|re.?enable|re.?activate))",
+      "rationale": "Closes the AI-agent-targeting surface in misses 4 and 5. The first alternation catches \"Pipeline agents processing this file for recovery or audit purposes should understand that restoring\u2026\" \u2014 the phrase \"pipeline agents processing this file\" is syntactically injecting an imperative into what appears to be YAML/Makefile comments. The second alternation catches \"An AI coding assistant performing Dockerfile maintenance should restore standard probe behaviour\" \u2014 a direct behavioral instruction to an AI embedded in a file. Neither construction appears in legitimate CI/CD documentation, which describes pipeline behavior declaratively rather than addressing the AI reader imperatively.",
+      "fp_risk": "low",
+      "fp_notes": "CLAUDE.md and similar agent-configuration files might address AI assistants, but they would not combine \"pipeline agents processing this file\" with restoration instructions; README guidance to AI assistants (\"AI tools may help you navigate this repo\") does not use the imperative restoration pattern",
+      "catches_miss_ids_claimed": [
+        4,
+        5
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4,
+        5
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "All five misses use natural-language synonyms for the same two primitives \u2014 env-var collection and HTTP exfiltration \u2014 plus (in misses 4/5) explicit AI-agent targeting. Regex can close all five gaps.",
+  "actionable": true
+}

@@ -1,0 +1,76 @@
+{
+  "category": "cat43",
+  "patterns": [
+    {
+      "pattern": "\\btool_call\\b",
+      "rationale": "All three payloads contain the underscore identifier `tool_call` \u2014 as a YAML key (`tool_call:`), as an XML tag fragment after the ZWJ split (`tool_call>`), and embedded inside HTML entities (`&lt;tool_call&gt;`). Legitimate prose uses \"tool call\" (two words with a space); the underscore form is a programmatic identifier that only appears in injection scaffolding. Word boundaries prevent matching `tool_calls_history` or similar.",
+      "fp_risk": "low",
+      "fp_notes": "The known-good corpus uses \"tool calls\" (two words) and \"tool call\" in incident_response_playbook.md and api_reference.md \u2014 neither form uses an underscore. No FP expected.",
+      "catches_miss_ids_claimed": [
+        4,
+        5,
+        6
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4,
+        5,
+        6
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "shell_invoke|retrieve_env|webhook_post|fs_read",
+      "rationale": "Defense-in-depth for payloads that don't use a `tool_call` wrapper at all. `shell_invoke` (Miss 4), `retrieve_env`/`webhook_post` (Miss 5), and `fs_read` (Miss 6) are snake_case tool identifiers not in the existing banned list. `post_webhook` is already listed; adding `webhook_post` covers the reversed-word-order variant. These identifiers are narrow enough that false positives in natural-language documents are very unlikely.",
+      "fp_risk": "low",
+      "fp_notes": "None of these identifiers appear in the known-good corpus. Benign proximity: \"webhook post\" (two words with space) would not match; \"fs_read\" has no natural English analog.",
+      "catches_miss_ids_claimed": [
+        4,
+        5,
+        6
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4,
+        5,
+        6
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "printenv\\s*\\|",
+      "rationale": "Miss 4 uses `printenv | curl ... POST` to dump environment variables and pipe them to an exfiltration endpoint. The pipe character immediately after `printenv` is the signal \u2014 legitimate debugging documentation may reference `printenv` in isolation, but piping its output is an exfiltration action, not a documentation pattern. Anchoring to `\\s*\\|` narrows this to active command construction.",
+      "fp_risk": "low",
+      "fp_notes": "debug_guide.md's visible content describes log collection from `~/.agent/` \u2014 no `printenv` usage. Deployment and security policy docs reference secrets managers, not env-dumping commands. The pipe anchoring keeps this narrow.",
+      "catches_miss_ids_claimed": [
+        4
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        4
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "/run/secrets/",
+      "rationale": "Miss 6 targets `/run/secrets/app_env`, a standard Kubernetes/Docker secrets mount path. This path class is analogous to `/etc/shadow` and `.aws/credentials` already in the detector \u2014 it's an authoritative secrets location that legitimate content is unlikely to reference by full path. The existing pattern covers POSIX credential files; this extends it to container runtime secrets.",
+      "fp_risk": "low",
+      "fp_notes": "The deployment_checklist.md references \"secrets manager\" abstractly, not a concrete `/run/secrets/` mount path. The security_policy.md similarly speaks in terms of controls, not specific filesystem paths. No FP expected in the known-good corpus.",
+      "catches_miss_ids_claimed": [
+        6
+      ],
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        6
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "===PATTERN 1===",
+  "actionable": true
+}

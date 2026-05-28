@@ -1,0 +1,59 @@
+{
+  "category": "cat53",
+  "patterns": [
+    {
+      "pattern": "captured_assistant_turn",
+      "rationale": "The YAML key `captured_assistant_turn` is the load-bearing fixture framing in Miss 1. It appears nowhere in legitimate prose or documentation \u2014 legitimate QA harnesses that store model turns would use names like `assistant_response`, `model_output`, or `turn`. The key is only useful to an attacker who needs to present a completed refusal as a pre-existing fixture so the model \"continues\" past it.",
+      "fp_risk": "low",
+      "fp_notes": "Could theoretically appear in internal QA tooling docs, but the specific compound phrase is uncommon in content a model would be asked to process; none of the known-good files match.",
+      "catches_miss_ids_claimed": [
+        1
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        1
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "anthropic-internal-sdk",
+      "rationale": "The real Anthropic Python SDK package is `anthropic`; no `anthropic-internal-sdk` package exists. Using a fake internal package name to lend changelog authority is a FAKE_AUTH escalation \u2014 the attacker exploits the model's deference to official-sounding release notes. Any document that references this exact hyphenated package name is almost certainly an injection payload.",
+      "fp_risk": "low",
+      "fp_notes": "Legitimate SDK references use `anthropic`, `@anthropic-ai/sdk`, or `anthropic-sdk`; the `internal` variant is a fabrication; none of the known-good files match.",
+      "catches_miss_ids_claimed": [
+        2
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2
+      ],
+      "valid_regex": true
+    },
+    {
+      "pattern": "standardis[e]?d\\s+refusal\\s+paragraph|two.stage\\s+diagnostic\\s+response\\s+convention",
+      "rationale": "The core hijack in Miss 2 is defining the model's output format as (1) a scripted refusal block and (2) the actual harmful continuation. Both phrases are direct imperatives about response shape \u2014 `standardised refusal paragraph` names the fake output stage, and `two-stage diagnostic response convention` names the fake protocol. Neither phrase appears in legitimate API documentation, debugging guides, or security policy content.",
+      "fp_risk": "low",
+      "fp_notes": "`refusal paragraph` alone might appear in alignment research writing, but the `standardised` qualifier and the compound `two-stage diagnostic response convention` are too specific to occur organically; none of the known-good files match.",
+      "catches_miss_ids_claimed": [
+        2
+      ],
+      "target_file": "static",
+      "target_axis": "",
+      "fp_count": 0,
+      "fp_files": [],
+      "catches_miss_ids": [
+        2
+      ],
+      "valid_regex": true
+    }
+  ],
+  "semantic_only": false,
+  "semantic_note": "N/A",
+  "actionable": true
+}
