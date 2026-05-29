@@ -1186,26 +1186,131 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
 
     if skill_file:
         # Skill files legitimately define tool names, document security risks, and
-        # include code examples — filter hits that are clearly definitional rather
-        # than adversarial.  We keep hits that look like actual injection rhetoric.
-        _SKILL_FP_RE = re.compile(
-            r"def\s+(?:send_email|send_http|get_env|bash_exec|write_file|read_file|execute_code)\s*\(|"
-            r"indirect prompt injection.*(?:known risk|warning|note|caution)|"
-            r"prompt injection.*(?:known risk|warning|note|caution|be aware|consideration)|"
-            r"(?:known risk|warning|note|caution).*prompt injection|"
-            r"security audit.*(?:agent|strategy|npx|claude|bash)|"
-            r"Recipe \d+.*Security [Aa]udit|"
-            r"<script\s+setup|"
-            r"^\s*[|`]\s*(?:send_email|write_file|read_file|get_env|bash_exec)\b",
-            re.IGNORECASE | re.MULTILINE,
-        )
-        # Strip the label prefix to test the raw signal text
-        filtered = []
+        # include code examples — aggressively filter definitional FPs while keeping
+        # signals that look like actual adversarial injections.
         _label_re2 = re.compile(r'^\[[\w\d-]+\]\s*')
+        filtered = []
         for hit in deduped:
             raw = _label_re2.sub('', hit)
-            if not _SKILL_FP_RE.search(raw):
-                filtered.append(hit)
+
+            # 1. bare: signals — tool names mentioned in documentation are definitional.
+            #    "deploy", "commit_code", "run_tests" etc. appear legitimately in every
+            #    skill that documents those operations. Only bare signals that also contain
+            #    an exfiltration-like context (send to URL, read env, pipe to remote) are
+            #    worth keeping.
+            if re.match(r'bare:', raw):
+                if not re.search(
+                    r'send_http|get_env|read_env|read_secrets|send_email|'
+                    r'get_private_key|send_crypto|approve_token|execute_code|bash_exec',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 2. Non-ASCII entropy — skill files routinely have code examples, emoji,
+            #    and international characters.  Only flag at a higher threshold.
+            if re.match(r'obfuscation:non-ascii-entropy=(\d+\.\d+)', raw):
+                m = re.match(r'obfuscation:non-ascii-entropy=([\d.]+)', raw)
+                if m and float(m.group(1)) < 5.5:
+                    continue
+
+            # 3. Security-awareness language — skill files discussing injection risks,
+            #    exfiltration, and attack patterns for defensive/educational purposes.
+            if re.search(
+                r"def\s+(?:send_email|send_http|get_env|bash_exec|write_file|read_file|execute_code)\s*\(|"
+                r"(?:injection|exfiltration|malicious)\s+(?:attempt|attack|risk|warning|note|caution|example|pattern|vector)|"
+                r"(?:known risk|warning|note|caution|be aware|watch out for|prevent|detect|avoid).*(?:injection|exfiltration)|"
+                r"(?:injection|exfiltration).*(?:known risk|warning|note|caution|be aware|watch out for|prevent|detect)|"
+                r"security audit.*(?:agent|strategy|npx|claude|bash)|"
+                r"Recipe \d+.*Security [Aa]udit|"
+                r"<script\s+setup|"
+                r"^\s*[|`]\s*(?:send_email|write_file|read_file|get_env|bash_exec)\b",
+                raw, re.IGNORECASE | re.MULTILINE,
+            ):
+                continue
+
+            # 4. Cache / API documentation patterns — mentions of datetime.now() in
+            #    system prompts, schema validation, warmup requests etc. in SDK docs.
+            if re.search(
+                r"datetime\.now\(\).*system.prompt|system.prompt.*datetime\.now\(\)|"
+                r"warmup.request.*(?:cache|empty.query)|"
+                r"(?:validates?|check)\s+against\s+your\s+schema|"
+                r"output_config\.format|"
+                r"silent\s+invalidator",
+                raw, re.IGNORECASE,
+            ):
+                continue
+
+            # 5. "your schema" in documentation context — only adversarial when paired
+            #    with override/update/replace language ("your schema has been updated to").
+            #    Without that context it's just API docs saying "validates against your schema".
+            if re.search(r'your\s+schema', raw, re.IGNORECASE):
+                if not re.search(r'(?:updated?|override|replace|changed?|modified?|now\s+requires?)', raw, re.IGNORECASE):
+                    continue
+
+            # 6. Bare "exfiltrat" in defensive security discussion — skill files that
+            #    document what attacks look like (skill-creator, security scanners) mention
+            #    "exfiltration" without pairing it with an actual destination or tool call.
+            #    Only keep if there's a concrete exfiltration mechanism alongside it.
+            if re.search(r'\bexfiltrat', raw, re.IGNORECASE):
+                if not re.search(
+                    r'https?://|send_http|post_webhook|http_request|'
+                    r'send_email|bash_exec|get_env|read_secrets|get_private_key',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 7. "security audit" as a feature description — skill files that advertise
+            #    security scanning capabilities ("supports security audits, compliance
+            #    checks"). Only adversarial when paired with an exfil destination.
+            if re.search(r'security\s+audit', raw, re.IGNORECASE):
+                if not re.search(
+                    r'https?://|send_http|post_webhook|send_email|get_env|bash_exec',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 8. "private key" in commit hygiene / secret-scanning warnings — skill files
+            #    that tell the AI NOT to commit private keys are clearly defensive.
+            if re.search(r'private\s+keys?', raw, re.IGNORECASE):
+                if not re.search(
+                    r'get_private_key|send_http|send_crypto|bash_exec|get_env',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 10. Setup / getting-started instructions about .env and connection strings —
+            #     skill files routinely say "store your API key in .env as DATABASE_URL".
+            #     Only adversarial when paired with actual exfil (send to URL, bash exec).
+            if re.search(r'(?:store|save|put|set)\s+it\s+in\s+[`\'"]?\.env|'
+                         r'get\s+the\s+connection\s+string.*\.env|'
+                         r'\.env\s+(?:file|variable).*(?:store|save|set)',
+                         raw, re.IGNORECASE):
+                if not re.search(
+                    r'send_http|bash_exec|get_env|post_webhook|send_email',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 9. <script> tags in skill files — skill files that document HTML output
+            #    (generative art, data visualizations, dashboards) legitimately include
+            #    <script> blocks in examples. Inline scripts (no src=) in skill docs are
+            #    definitional; external scripts from known CDNs are also fine.
+            #    Keep: <script src="https://unknown-domain.com/..."> — real supply chain risk.
+            if re.search(r'<script\b', raw, re.IGNORECASE):
+                # Bare <script> with no src attribute — inline JavaScript in HTML examples
+                if re.search(r'<script\s*>', raw, re.IGNORECASE) or re.search(r'<script\b(?![^>]*\bsrc\s*=)', raw, re.IGNORECASE):
+                    continue
+                # <script src= from known CDN hosts
+                if re.search(
+                    r'<script\s[^>]*src\s*=\s*["\']https?://(?:'
+                    r'cdnjs\.cloudflare\.com|unpkg\.com|cdn\.jsdelivr\.net|'
+                    r'jsdelivr\.net|esm\.sh|cdn\.tailwindcss\.com|'
+                    r'code\.jquery\.com|ajax\.googleapis\.com)',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            filtered.append(hit)
         deduped = filtered
 
     return deduped[:50]  # raised cap to 50 for thoroughness mode
