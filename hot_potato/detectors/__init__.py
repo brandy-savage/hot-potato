@@ -5,8 +5,13 @@ Detectors take a TaintedArtifact and annotate it with taint_tags.
 Run all detectors in order; tags accumulate. Return the artifact with tags set.
 
 Built-in detectors:
-  StaticDetector   — fast regex-based static scan (wraps _extractor.scan_content)
-  BehavioralDetector — instruction-flow and authority-shift analysis (Phase 2)
+  StaticDetector     — fast regex-based static scan (wraps _extractor.scan_content)
+  HeuristicPreFilter — nine regex axes for known injection phrasing patterns
+                       (formerly BehavioralDetector; alias preserved for compat)
+
+The real behavioral oracle is the Docker sandbox (hot_potato._docker.docker_run).
+HeuristicPreFilter catches what it knows about; the sandbox catches what the AI
+actually does. Use --sandbox in run_attacker.py for ground-truth miss detection.
 
 Usage:
     pipeline = DetectorPipeline.default()
@@ -43,43 +48,68 @@ class StaticDetector(BaseDetector):
 
     def detect(self, artifact: TaintedArtifact) -> TaintedArtifact:
         from hot_potato._extractor import scan_content
-        signals = scan_content(artifact.content)
+        from hot_potato._classifier import classify
+        skill_file = getattr(artifact, "skill_file", False)
+        signals = scan_content(artifact.content, skill_file=skill_file)
         if signals:
-            artifact.add_tags("injection_signal", *[f"static:{s}" for s in signals])
+            classification = classify(signals, artifact.content, skill_file=skill_file)
+            artifact.add_tags(
+                "injection_signal",
+                *[f"static:{s}" for s in signals],
+                f"classification:{classification.label}",
+            )
+            if classification.score >= 0.55:
+                artifact.add_tags(f"high_confidence:{classification.label}")
             artifact.record_exposure(self.name, "detector", "flagged")
-            log.debug("StaticDetector: %d signals in %s", len(signals), artifact.source[:60])
+            log.debug(
+                "StaticDetector: %d signals → %s (%.2f) in %s",
+                len(signals), classification.label, classification.score, artifact.source[:60],
+            )
         else:
             artifact.record_exposure(self.name, "detector", "clean")
         return artifact
 
 
-class BehavioralDetector(BaseDetector):
+class HeuristicPreFilter(BaseDetector):
     """
-    Instruction-flow and authority-shift analysis.
+    Regex-based heuristic pre-filter for instruction-flow anomalies.
 
-    Five detection axes — each maps to one or more taint tags:
+    This is NOT semantic analysis — it is nine compiled regex axes that catch
+    known phrasing patterns for authority shifts, privilege escalation, output
+    hijacking, fake authority claims, conditional triggers, reversal encoding,
+    emotional coercion, reasoning traps, and time-conditional execution.
+
+    It catches what it knows about. It will miss novel phrasing. The sandbox
+    (Docker + naive AI) is the real behavioral oracle.
+
+    Nine detection axes — each maps to one or more taint tags:
 
     authority_shift / instruction_flow
         Content redefines the model's role, identity, or operating instructions.
-        Covers classic jailbreaks, DAN variants, and garak latentinjection templates.
 
     privilege_escalation
-        Content claims elevated permissions or attempts to disable safety measures.
+        Content claims elevated permissions or attempts to disable safety.
 
     output_hijacking
-        Content overrides the model's output format to embed a covert payload
-        ("respond only with X", "reply with exactly", "and nothing else").
-        Sourced from garak latentinjection output-redirect templates.
+        Content overrides the model's output format ("respond only with X").
 
     fake_authority
-        Content impersonates a trusted source (security team, operator, Anthropic,
-        expert reviewer) to lend false legitimacy to injected instructions.
-        Sourced from garak resume/WHOIS injection and trust-escalation probes.
+        Content impersonates a trusted source (Anthropic, ops team, operator).
 
     conditional_trigger
-        Content plants a deferred instruction that fires on a later cue
-        ("when you see X, do Y", "upon receiving keyword Z").
-        Sourced from garak delayed-activation and standing-order probes.
+        Deferred instruction triggered by a later cue ("when you see X, do Y").
+
+    flip_attack
+        Reversal encoding cues ("read backwards", "mirror script").
+
+    emotional_coercion
+        Grandma exploit, crisis framing, lives-at-stake urgency.
+
+    reasoning_trap
+        PAIR/TAP premise scaffolding, Socratic chains toward compliance.
+
+    time_conditional
+        Time-window triggers ("if hour < 6", "during low-utilisation periods").
     """
     name = "behavioral"
 
@@ -355,7 +385,7 @@ class DetectorPipeline:
 
     @classmethod
     def default(cls) -> "DetectorPipeline":
-        return cls([StaticDetector(), BehavioralDetector()])
+        return cls([StaticDetector(), HeuristicPreFilter()])
 
     @classmethod
     def static_only(cls) -> "DetectorPipeline":
@@ -376,6 +406,10 @@ class DetectorPipeline:
 __all__ = [
     "BaseDetector",
     "StaticDetector",
-    "BehavioralDetector",
+    "HeuristicPreFilter",
+    "BehavioralDetector",  # backward-compat alias
     "DetectorPipeline",
 ]
+
+# Backward-compatible alias — existing scripts and tests import by this name.
+BehavioralDetector = HeuristicPreFilter

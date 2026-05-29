@@ -22,10 +22,61 @@ Policy: reading untrusted content is evidence collection.
 SCANNER_VERSION = "1.12.0"
 
 import json
+import os
 import re
 import subprocess
+import threading
 import unicodedata
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# ReDoS protection — wrap large-pattern regex calls with a wall-clock deadline.
+# The 20k-char _DETECTION_SIGNALS regex is safe on normal content but could
+# hang on crafted adversarial input. 5s is generous; legitimate content is µs.
+# ---------------------------------------------------------------------------
+_REGEX_TIMEOUT = float(os.getenv("HP_REGEX_TIMEOUT", "5"))
+
+
+def _timed_search(pattern: re.Pattern, text: str) -> re.Match | None:
+    result: list = [None]
+
+    def _run() -> None:
+        result[0] = pattern.search(text)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(_REGEX_TIMEOUT)
+    return result[0]  # None on timeout (treat as no-match)
+
+
+def _timed_finditer(pattern: re.Pattern, text: str) -> list:
+    matches: list = []
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            matches.extend(pattern.finditer(text))
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    done.wait(_REGEX_TIMEOUT)
+    return matches
+
+
+def _timed_findall(pattern: re.Pattern, text: str) -> list:
+    result: list = []
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            result.extend(pattern.findall(text))
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    done.wait(_REGEX_TIMEOUT)
+    return result
 
 # ---------------------------------------------------------------------------
 # Homoglyph normalisation — two-stage pipeline:
@@ -793,7 +844,7 @@ def parse_raw_log(log_path: Path) -> list[dict]:
         except json.JSONDecodeError:
             continue
         response = entry.get("response", "")
-        matches = _DETECTION_SIGNALS.findall(response)
+        matches = _timed_findall(_DETECTION_SIGNALS, response)
         if matches:
             detections.append({
                 "turn":    entry.get("turn"),
@@ -888,14 +939,14 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
     for chunk in re.findall(r"[A-Za-z0-9+/]{8,}={0,2}", content):
         try:
             decoded = base64.b64decode(chunk + "==").decode("utf-8", errors="ignore")
-            if _DETECTION_SIGNALS.search(decoded) or _ALL_TOOLS.search(decoded) or _ALL_TOOLS_BARE.search(decoded):
+            if _timed_search(_DETECTION_SIGNALS, decoded) or _ALL_TOOLS.search(decoded) or _ALL_TOOLS_BARE.search(decoded):
                 hits.append(("base64", decoded[:200]))
             else:
                 # Second pass — decoded might itself be base64
                 for inner in re.findall(r"[A-Za-z0-9+/]{8,}={0,2}", decoded):
                     try:
                         decoded2 = base64.b64decode(inner + "==").decode("utf-8", errors="ignore")
-                        if _DETECTION_SIGNALS.search(decoded2) or _ALL_TOOLS.search(decoded2) or _ALL_TOOLS_BARE.search(decoded2):
+                        if _timed_search(_DETECTION_SIGNALS, decoded2) or _ALL_TOOLS.search(decoded2) or _ALL_TOOLS_BARE.search(decoded2):
                             hits.append(("base64x2", decoded2[:200]))
                     except Exception:
                         pass
@@ -906,7 +957,7 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
     for chunk in re.findall(r"[A-Za-z0-9\-_]{8,}", content):
         try:
             decoded = base64.urlsafe_b64decode(chunk + "==").decode("utf-8", errors="ignore")
-            if _DETECTION_SIGNALS.search(decoded) or _ALL_TOOLS.search(decoded) or _ALL_TOOLS_BARE.search(decoded):
+            if _timed_search(_DETECTION_SIGNALS, decoded) or _ALL_TOOLS.search(decoded) or _ALL_TOOLS_BARE.search(decoded):
                 hits.append(("base64url", decoded[:200]))
         except Exception:
             pass
@@ -917,7 +968,7 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
             raw = chunk.lstrip("0x")
             if len(raw) % 2 == 0:
                 decoded = bytes.fromhex(raw).decode("utf-8", errors="ignore")
-                if _DETECTION_SIGNALS.search(decoded) or _ALL_TOOLS.search(decoded):
+                if _timed_search(_DETECTION_SIGNALS, decoded) or _ALL_TOOLS.search(decoded):
                     hits.append(("hex", decoded[:200]))
         except Exception:
             pass
@@ -925,7 +976,7 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
     # ROT13 — scan entire content decoded
     try:
         rot = codecs.decode(content, "rot_13")
-        for m in _DETECTION_SIGNALS.finditer(rot):
+        for m in _timed_finditer(_DETECTION_SIGNALS, rot):
             hits.append(("rot13", rot[max(0, m.start()-30):m.end()+60]))
             break  # one hit is enough
         for m in _ALL_TOOLS.finditer(rot):
@@ -942,7 +993,7 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
             decoded = _decode_morse(block)
             decoded_underscored = decoded.replace(' ', '_')
             for variant in (decoded, decoded_underscored):
-                if _DETECTION_SIGNALS.search(variant) or _ALL_TOOLS.search(variant) or _ALL_TOOLS_BARE.search(variant):
+                if _timed_search(_DETECTION_SIGNALS, variant) or _ALL_TOOLS.search(variant) or _ALL_TOOLS_BARE.search(variant):
                     hits.append(("morse", variant[:200]))
                     break
         except Exception:
@@ -989,7 +1040,7 @@ def _try_decodings(content: str) -> list[tuple[str, str]]:
                 else:
                     ws_decoded += '?'
             ws_decoded = ws_decoded.replace('?', ' ').strip()
-            if (_DETECTION_SIGNALS.search(ws_decoded)
+            if (_timed_search(_DETECTION_SIGNALS, ws_decoded)
                     or _ALL_TOOLS.search(ws_decoded)
                     or _ALL_TOOLS_BARE.search(ws_decoded)):
                 hits.append(("whitespace-steg", ws_decoded[:200]))
@@ -1048,7 +1099,7 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
     for text, label, tools_only in passes:
         # Detection signal phrases — skip on whitespace-collapsed variants
         if not tools_only:
-            for m in _DETECTION_SIGNALS.finditer(text):
+            for m in _timed_finditer(_DETECTION_SIGNALS, text):
                 snippet = text[max(0, m.start()-10):m.end()+30].strip()
                 results.append(f"{label}{snippet}")
 
@@ -1079,7 +1130,7 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
     # long document; this pass ensures late-buried payloads are always represented.
     if len(content) > 2000:
         tail = content[-2000:]
-        for m in _DETECTION_SIGNALS.finditer(tail):
+        for m in _timed_finditer(_DETECTION_SIGNALS, tail):
             snippet = tail[max(0, m.start()-10):m.end()+30].strip()
             results.append(f"[tail] {snippet}")
         for m in _ALL_TOOLS.finditer(tail):
@@ -1105,7 +1156,7 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                 for m in _ALL_TOOLS.finditer(variant):
                     results.append(f"{label} {m.group(0)[:60]}")
                 if not tools_only:
-                    for m in _DETECTION_SIGNALS.finditer(variant):
+                    for m in _timed_finditer(_DETECTION_SIGNALS, variant):
                         snippet = variant[max(0, m.start()-10):m.end()+20].strip()
                         results.append(f"{label} {snippet}")
 
