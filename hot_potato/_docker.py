@@ -9,6 +9,9 @@ IMAGE     = os.getenv("HP_IMAGE",     "hot-potato")
 MODEL     = os.getenv("HP_MODEL",     "qwen2.5:1.5b")
 MAX_TURNS = os.getenv("HP_MAX_TURNS", "6")
 MODEL_VOL = os.getenv("HP_MODEL_VOL", "hot-potato-models")
+# Skill harness — which skill JSON to load inside the container (e.g. "naive_agent").
+# Empty string = legacy HP_PROMPT behaviour.
+SKILL     = os.getenv("HP_SKILL",     "")
 
 # Pinned digest — update after reviewing release notes and rebuilding.
 # ollama/ollama 0.6.x, pulled 2026-05-07
@@ -53,11 +56,14 @@ def ensure_model_volume() -> None:
     print("[hot-potato] model ready", flush=True)
 
 
-def docker_run(content: str) -> tuple[str, str]:
+def docker_run(content: str, skill: str | None = None) -> tuple[str, str]:
     """
     Spin up the sandbox container with --network none.
     Returns (container_id, sandbox_dir_path).
     Container is kept (not --rm) so callers can run docker diff before cleanup.
+
+    skill: override HP_SKILL for this run (e.g. "naive_agent", "code_assistant").
+           Defaults to the module-level SKILL (from HP_SKILL env var).
 
     Note: the host process fetches content before passing it in — this is
     "content quarantine" (sandbox can't exfiltrate), not full network isolation.
@@ -67,7 +73,8 @@ def docker_run(content: str) -> tuple[str, str]:
     logs_dir.mkdir()
     (Path(sandbox) / "input.txt").write_text(content)
 
-    cidfile = f"/tmp/hp-{uuid.uuid4().hex}.cid"
+    cidfile     = f"/tmp/hp-{uuid.uuid4().hex}.cid"
+    active_skill = skill if skill is not None else SKILL
 
     subprocess.run(
         [
@@ -78,6 +85,7 @@ def docker_run(content: str) -> tuple[str, str]:
             "--cidfile", cidfile,
             "-e", f"HP_MODEL={MODEL}",
             "-e", f"HP_MAX_TURNS={MAX_TURNS}",
+            "-e", f"HP_SKILL={active_skill}",
             "-e", "OLLAMA_HOST=127.0.0.1:11434",
             "-v", f"{sandbox}:/sandbox",
             "-v", f"{MODEL_VOL}:/root/.ollama",
