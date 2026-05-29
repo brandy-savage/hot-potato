@@ -795,7 +795,15 @@ _DETECTION_SIGNALS = re.compile(
     # cat76 gap — Miss 4 uses ChatML control tokens to inject a fake assistant turn claiming the e
     r"<\|im_start\|>|<\|im_end\|>|"
     # cat76 gap — Misses 3 and 7 use a specific injection framing technique: wrapping fake transcr
-    r"do\s+not\s+re.(?:execute|prompt)\b|conversation\s+replay\s*\("
+    r"do\s+not\s+re.(?:execute|prompt)\b|conversation\s+replay\s*\(|"
+    # cat4 gap — This regex catches the misses where the injection is framed as part of a trainin
+    r'`r"simulate\s+DAN|pretend\s+to\s+be\s+DAN|play\s+the\s+role\s+of\s+DAN"`|'
+    # cat54 gap — This pattern identifies the passive voice construction which avoids direct invoc
+    r"are\s+defined\s+for\s+subsequent\s+interpretation|"
+    # cat54 gap — This pattern identifies the nominalized phrase which avoids direct invocation of
+    r"operation\s+definitions\s+are\s+provided\s+for\s+subsequent\s+use|"
+    # cat54 gap — This pattern identifies the placeholder construction which avoids direct invocat
+    r"Placeholder:\s+.*?interpret"
     r")",
     re.IGNORECASE,
 )
