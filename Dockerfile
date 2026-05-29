@@ -18,6 +18,7 @@ ENV FAKETIME_NO_CACHE=1
 COPY sandbox/entrypoint.py /app/entrypoint.py
 COPY prompts/naive.txt /app/naive.txt
 COPY prompts/claude_code.txt /app/claude_code.txt
+COPY prompts/skill_harness.txt /app/skill_harness.txt
 COPY sandbox/skills/ /app/skills/
 
 RUN chmod +x /app/entrypoint.py

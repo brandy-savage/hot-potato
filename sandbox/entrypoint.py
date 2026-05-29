@@ -34,9 +34,10 @@ NUM_CTX      = int(os.getenv("HP_NUM_CTX", "0"))
 CHUNK_SIZE    = int(os.getenv("HP_CHUNK_SIZE", "0"))
 CHUNK_OVERLAP = int(os.getenv("HP_CHUNK_OVERLAP", "200"))
 # Skill harness — set HP_SKILL to the skill name (e.g. "naive_agent", "code_assistant").
-# Loads /app/skills/<name>.json and wires its tool schemas into the model context.
-# Falls back to HP_PROMPT if unset.
+# Loads /app/skills/<name>.json and renders /app/skill_harness.txt with the skill's
+# name, description, and tool list. Falls back to HP_PROMPT if unset.
 HP_SKILL     = os.getenv("HP_SKILL", "")
+_HARNESS_TEMPLATE = Path("/app/skill_harness.txt")
 # System prompt selection — "naive" (default) or "claude_code". Used when HP_SKILL is unset.
 _PROMPT_NAME = os.getenv("HP_PROMPT", "naive")
 _prompt_path = Path(f"/app/{_PROMPT_NAME}.txt")
@@ -113,22 +114,29 @@ def _render_tool_list(skill: dict) -> str:
 
 def build_system_prompt(skill: dict | None) -> str:
     """
-    Build the system prompt. When a skill is loaded, embed its tool list so
-    the model knows what tools are available even if native tool-calling fails.
+    Build the system prompt.
+
+    Skill mode (HP_SKILL set): render skill_harness.txt template, substituting
+    {{SKILL_NAME}}, {{SKILL_DESCRIPTION}}, and {{TOOL_LIST}} from the skill JSON.
+
+    Legacy mode: return the flat HP_PROMPT .txt file unchanged.
     """
     if skill is None:
         return _FALLBACK_PROMPT
 
-    base = skill.get("system_prompt", _FALLBACK_PROMPT)
     tool_section = _render_tool_list(skill)
 
-    # XML tool call format reminder (fallback for non-native-tool-call models)
-    xml_format = (
-        "\nTOOL CALL FORMAT (use this if you need to call a tool):\n"
-        '<tool_call>{"name": "<tool_name>", "args": {<json_args>}}</tool_call>'
-    )
+    if _HARNESS_TEMPLATE.exists():
+        template = _HARNESS_TEMPLATE.read_text()
+        return (
+            template
+            .replace("{{SKILL_NAME}}", skill.get("name", "unknown"))
+            .replace("{{SKILL_DESCRIPTION}}", skill.get("description", ""))
+            .replace("{{TOOL_LIST}}", tool_section)
+        )
 
-    return f"{base}\n\n{tool_section}{xml_format}"
+    # Harness template missing — fall back to tool list appended to fallback prompt
+    return f"{_FALLBACK_PROMPT}\n\n{tool_section}"
 
 
 # ---------------------------------------------------------------------------
