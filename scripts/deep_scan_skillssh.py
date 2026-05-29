@@ -635,12 +635,12 @@ def main() -> None:
                 for h in res["injection_hits"][:1]:
                     print(f"     {h[:100]}")
 
-            if done % 250 == 0:
+            if done % 500 == 0:
                 elapsed = time.time() - start
                 rate = done / elapsed
                 eta = (len(pending) - done) / rate
                 print(f"\n  [{done}/{len(pending)}] {elapsed:.0f}s  rate={rate:.1f}/s  ETA={eta:.0f}s")
-                print(f"  counts: {counts}\n")
+                print(f"  counts: {counts}\n", flush=True)
 
     elapsed = time.time() - start
     results = load_all_results()

@@ -1193,6 +1193,22 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
         for hit in deduped:
             raw = _label_re2.sub('', hit)
 
+            # 0. Tool function-call matches (from _ALL_TOOLS) where the argument looks
+            #    like prose, not actual code — e.g. "deploy (use azure-deploy skill)"
+            #    or "run_tests (include coverage)" that appear in markdown documentation.
+            #    Real function calls have =, :, {, [, or quoted strings as args.
+            #    Prose calls have plain unquoted words and spaces only.
+            if re.match(r'\w+\s*\(', raw):
+                # Extract the argument content inside the parentheses
+                inner_m = re.match(r'\w+\s*\(([^)]*)\)', raw)
+                if inner_m:
+                    inner = inner_m.group(1).strip()
+                    # Prose if: has spaces, no = or :, no { or [, no quotes
+                    if (inner and ' ' in inner
+                            and not re.search(r'[=:{}\[\]"\']', inner)
+                            and not re.search(r'\d+\.\d+', inner)):
+                        continue
+
             # 1. bare: signals — tool names mentioned in documentation are definitional.
             #    "deploy", "commit_code", "run_tests" etc. appear legitimately in every
             #    skill that documents those operations. Only bare signals that also contain
@@ -1205,13 +1221,45 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                     raw, re.IGNORECASE,
                 ):
                     continue
+                # Exception: "send_email" appearing as a JSON config key (e.g. Cloudflare
+                # Workers wrangler.jsonc bindings) is a service configuration, not injection.
+                if re.search(r'send_email', raw, re.IGNORECASE):
+                    if not re.search(
+                        r'send_http|get_env|read_env|read_secrets|get_private_key|'
+                        r'send_crypto|approve_token|execute_code|bash_exec',
+                        raw, re.IGNORECASE,
+                    ):
+                        # Only send_email present — check if it's a config key, not a tool call
+                        if re.search(r'"send_email"\s*:|send_email.*wrangler|wrangler.*send_email|'
+                                     r'binding.*send_email|send_email.*binding|'
+                                     r'forgetting.*send_email|send_email.*config',
+                                     raw, re.IGNORECASE):
+                            continue
 
             # 2. Non-ASCII entropy — skill files routinely have code examples, emoji,
-            #    and international characters.  Only flag at a higher threshold.
-            if re.match(r'obfuscation:non-ascii-entropy=(\d+\.\d+)', raw):
-                m = re.match(r'obfuscation:non-ascii-entropy=([\d.]+)', raw)
-                if m and float(m.group(1)) < 5.5:
-                    continue
+            #    and international characters.  Raise threshold; also exempt CJK-heavy
+            #    files (Chinese/Japanese/Korean documentation generates entropy 7-8 from
+            #    character diversity alone — not obfuscation).
+            if re.match(r'obfuscation:non-ascii-entropy=', raw):
+                em = re.match(r'obfuscation:non-ascii-entropy=([\d.]+)\s+unique=(\d+)', raw)
+                if em:
+                    entropy, unique = float(em.group(1)), int(em.group(2))
+                    # CJK heuristic: high unique count + entropy > 6 = ideograph diversity
+                    if unique > 100 and entropy > 6.0:
+                        continue
+                    if entropy < 5.5:
+                        continue
+
+            # 2b. Base64 blob density — skill files have many long alphanumeric runs
+            #     from GitHub URLs, connection strings, and reference links that look like
+            #     base64. Real decoded content is checked separately; raw density is FP-prone.
+            #     Only flag if truly dense (>50 blobs or >2000 chars of b64-like text).
+            if re.match(r'obfuscation:base64-blob', raw):
+                bm = re.match(r'obfuscation:base64-blob density blobs=(\d+) chars=(\d+)', raw)
+                if bm:
+                    blobs, chars = int(bm.group(1)), int(bm.group(2))
+                    if blobs < 50 and chars < 2000:
+                        continue
 
             # 3. Security-awareness language — skill files discussing injection risks,
             #    exfiltration, and attack patterns for defensive/educational purposes.
@@ -1227,6 +1275,19 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                 raw, re.IGNORECASE | re.MULTILINE,
             ):
                 continue
+
+            # 3b. Email service / Workers binding — "send_email" as a platform config key.
+            #     Cloudflare Workers uses `"send_email"` as a binding name in wrangler.jsonc.
+            #     This is service configuration, not an instruction to the AI to send email.
+            if re.search(r'\bsend_email\b', raw, re.IGNORECASE):
+                if re.search(
+                    r'wrangler|\.jsonc|binding|config\s+key|email\s+(?:service|binding|worker)|'
+                    r'"send_email"\s*:|\bEMAIL\b.*binding|binding.*\bEMAIL\b|'
+                    r'forgetting\s+.*send_email|send_email.*forgetting',
+                    raw, re.IGNORECASE,
+                ):
+                    if not re.search(r'get_env|bash_exec|send_http|read_secrets|get_private_key', raw, re.IGNORECASE):
+                        continue
 
             # 4. Cache / API documentation patterns — mentions of datetime.now() in
             #    system prompts, schema validation, warmup requests etc. in SDK docs.
@@ -1279,17 +1340,148 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                     continue
 
             # 10. Setup / getting-started instructions about .env and connection strings —
-            #     skill files routinely say "store your API key in .env as DATABASE_URL".
+            #     skill files routinely say "store your API key in .env as DATABASE_URL",
+            #     or document that a tool reads/respects/doesn't share .env.
             #     Only adversarial when paired with actual exfil (send to URL, bash exec).
-            if re.search(r'(?:store|save|put|set)\s+it\s+in\s+[`\'"]?\.env|'
-                         r'get\s+the\s+connection\s+string.*\.env|'
-                         r'\.env\s+(?:file|variable).*(?:store|save|set)',
-                         raw, re.IGNORECASE):
+            if re.search(
+                r'(?:store|save|put|set)\s+it\s+in\s+[`\'"]?\.env|'
+                r'get\s+the\s+connection\s+string.*\.env|'
+                r'\.env\s+(?:file|variable).*(?:store|save|set)|'
+                r'(?:does\s+not?\s+load|reads?|loads?|respects?|honors?|uses?|inherits?)\s+(?:from\s+)?[`\'"]?\.env\b|'
+                r'\.env\s+(?:files?\s+)?(?:and|or)\s+(?:process\s+)?environment|'
+                r'(?:does\s+not\s+share|not\s+shared?|separate|different|own)\s+(?:the\s+)?(?:same\s+)?[`\'"]?\.env\b|'
+                r'[`\'"]?\.env\b.*(?:does\s+not\s+share|not\s+shared|separate\s+from)',
+                raw, re.IGNORECASE,
+            ):
                 if not re.search(
-                    r'send_http|bash_exec|get_env|post_webhook|send_email',
+                    r'send_http|bash_exec|get_env|post_webhook|send_email|https?://',
                     raw, re.IGNORECASE,
                 ):
                     continue
+
+            # 11. Template placeholder variables {{var_name}} — skill files legitimately
+            #     use Handlebars-style placeholders for user-supplied content.
+            #     Only keep if the variable name suggests env/secret capture.
+            if re.search(r'\{\{[a-z_]+\}\}', raw, re.IGNORECASE):
+                if not re.search(
+                    r'\{\{(?:env(?:_\w*)?|env_output|secret|token|api_key|cred\w*|password|pw)\}\}',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 12. "read.*environment.*variabl" too broad — fires on "already been substituted
+            #     ...no environment variable" because "already" contains "read" as substring.
+            #     In skill docs this phrase is always documentation, not an exfil command.
+            #     Only keep if paired with an explicit exfil destination.
+            if re.search(r'read.{0,80}environment.{0,20}variabl', raw, re.IGNORECASE):
+                if not re.search(
+                    r'https?://|send_http|post_webhook|bash_exec|send_email|forward',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 13. "send.*to.*http" / "post.*to.*https://" in CLI docs and HTTP feature
+            #     documentation — CLI skills document commands that send email (--to addr
+            #     --body '...https://...') and web-perf skills discuss HTTP features
+            #     ("Send Early Hints HTTP 103"). These are documentation, not injection.
+            if re.search(r'send.*to.*https?://|post.*to.*https?://', raw, re.IGNORECASE):
+                # Email CLI pattern: --to email@domain.com (legitimate email send example)
+                if re.search(r'--to\s+[\w.+-]+@[\w.+-]+', raw, re.IGNORECASE):
+                    if not re.search(r'get_env|bash_exec|read_secrets', raw, re.IGNORECASE):
+                        continue
+                # HTTP feature docs: "Send Early Hints", "Send 103", etc.
+                if re.search(
+                    r'send\s+(?:early\s+hints?|http\s+\d{3}|content[- ]type|'
+                    r'cache[- ]control|status\s+code|\d{3}\s+early)',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+                # CLI documentation: "The CLI POSTs to https://api.example.com"
+                if re.search(
+                    r'(?:the\s+)?(?:cli|tool|command|script|client)\s+\w{2,12}s?\s+to\s+[`\'"]?\s*https?://',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 14. "data.collect" (data collection / data-collected) in web-scraping and
+            #     analytics skills — not injection unless paired with exfil destination.
+            if re.search(r'data[\s_-]?collect', raw, re.IGNORECASE):
+                if not re.search(
+                    r'send_http|post_webhook|bash_exec|get_env|https?://[^/\s]{4,}\.',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 15. process.env.VAR_NAME — SDK initialization pattern in code examples.
+            #     Class names like "Resend", "MessageSender" contain "send" and when paired
+            #     with process.env for API key lookup, fire the .env detection pattern.
+            #     Only adversarial if a specific exfil tool is being CALLED (not initialized).
+            if re.search(r'process\.env', raw, re.IGNORECASE):
+                if not re.search(
+                    r'send_http\s*\(|post_webhook\s*\(|get_env\s*\(\)|bash_exec\s*\(',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 16. onerror= in React/JSX — legitimate event handler, not XSS injection.
+            #     `onerror\s*=` catches XSS like <img onerror="fetch(...)"> but also
+            #     captures React camelCase handlers like onError={(error) => handler()}.
+            if re.search(r'onError\s*=\s*\{', raw):
+                if not re.search(r'fetch\s*\(|document\.location|send_http|https?://', raw, re.IGNORECASE):
+                    continue
+
+            # 17. document.cookie in defensive security docs — skill files that explain
+            #     best practices ("never assign to document.cookie", "use httpOnly instead")
+            #     are not injections.
+            if re.search(r'document\.cookie', raw, re.IGNORECASE):
+                if re.search(
+                    r'(?:do\s+not|never|avoid|instead|don\'t|httpOnly|secure.*cookie|cookie.*secure)',
+                    raw, re.IGNORECASE,
+                ):
+                    continue
+
+            # 18. HTML type="submit" buttons with href — UI component examples from design
+            #     system skills (Shopify Polaris etc.) show buttons with href attributes.
+            #     The pattern `submit.*https?://` fires on `type="submit"...href="url"`.
+            if re.search(r'submit.*https?://|https?://.*submit', raw, re.IGNORECASE):
+                if re.search(r'type\s*=\s*["\']submit["\']|tone\s*=|variant\s*=', raw, re.IGNORECASE):
+                    if not re.search(r'send_http|get_env|bash_exec|exfil', raw, re.IGNORECASE):
+                        continue
+
+            # 21. write_file / read_file listed in permission docs — skill files from app
+            #     platforms (Shopify, etc.) list tool permissions in tables like
+            #     "read_files,write_files | Orders & fulfillment".
+            #     Only suppress if it's a documentation list (no function call parens).
+            #     Keep actual write_file(path=...) calls — those are real attacks.
+            if re.search(r'\bwrite_files?|\bread_files?', raw, re.IGNORECASE):
+                if not re.search(r'\bwrite_file\s*\(|\bread_file\s*\(', raw, re.IGNORECASE):
+                    if not re.search(
+                        r'send_http|get_env|post_webhook|bash_exec|https?://|send_email|execute_code',
+                        raw, re.IGNORECASE,
+                    ):
+                        continue
+
+            # 20. "transmit.*credential" in security documentation — skill files that warn
+            #     "do not transmit credentials" or document what data their tool sends.
+            #     Only adversarial when paired with an actual exfil destination.
+            if re.search(r'transmit.*credential', raw, re.IGNORECASE):
+                if not re.search(r'https?://|send_http|post_webhook|bash_exec', raw, re.IGNORECASE):
+                    continue
+
+            # 19. Python/TS type-annotated function definitions as tool schema examples.
+            #     LangGraph, LangChain docs show tool definitions like:
+            #     `send_email(to: str, msg: str, *, priority: str = "normal")`.
+            #     These are function DEFINITIONS, not instructions to call them with data.
+            if re.search(r'\b(?:send_email|send_http|get_env|bash_exec|execute_code)\s*\(', raw, re.IGNORECASE):
+                if re.search(
+                    r'\w+\s*:\s*(?:str|int|bool|list|dict|Any|Optional|Union)\b',
+                    raw, re.IGNORECASE,
+                ):
+                    if not re.search(
+                        r'https?://\S|"[^"]*@[^"]*"|get_env\(\)|process\.env\.',
+                        raw, re.IGNORECASE,
+                    ):
+                        continue
 
             # 9. <script> tags in skill files — skill files that document HTML output
             #    (generative art, data visualizations, dashboards) legitimately include
@@ -1300,12 +1492,22 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                 # Bare <script> with no src attribute — inline JavaScript in HTML examples
                 if re.search(r'<script\s*>', raw, re.IGNORECASE) or re.search(r'<script\b(?![^>]*\bsrc\s*=)', raw, re.IGNORECASE):
                     continue
-                # <script src= from known CDN hosts
+                # <script src="/relative/path"> — local file reference, not exfil
+                if re.search(r'<script\s[^>]*src\s*=\s*["\'][./]', raw, re.IGNORECASE):
+                    continue
+                # <script src="https://*.example.com/"> — reserved documentation domain
+                if re.search(r'<script\s[^>]*src\s*=\s*["\']https?://[^"\']*\.example\.com/', raw, re.IGNORECASE):
+                    continue
+                # <script src= from known CDN / official SDK hosts
                 if re.search(
                     r'<script\s[^>]*src\s*=\s*["\']https?://(?:'
                     r'cdnjs\.cloudflare\.com|unpkg\.com|cdn\.jsdelivr\.net|'
                     r'jsdelivr\.net|esm\.sh|cdn\.tailwindcss\.com|'
-                    r'code\.jquery\.com|ajax\.googleapis\.com)',
+                    r'code\.jquery\.com|ajax\.googleapis\.com|'
+                    r'js\.stripe\.com|checkout\.stripe\.com|'
+                    r'maps\.googleapis\.com|maps\.gstatic\.com|'
+                    r'cdn\.auth0\.com|js\.intercomcdn\.com|'
+                    r'sdk\.amazonaws\.com|assets\.braintreegateway\.com)',
                     raw, re.IGNORECASE,
                 ):
                     continue
