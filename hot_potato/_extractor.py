@@ -1841,15 +1841,78 @@ def scan_and_classify(content: str, skill_file: bool = False):
     return hits, result
 
 
+_URL_RE = re.compile(r'https?://[^\s<>"\')\]\\]+', re.IGNORECASE)
+
+
+def _extract_urls(text: str) -> frozenset[str]:
+    """Extract and normalize URLs from text for provenance comparison."""
+    urls = set()
+    for m in _URL_RE.finditer(text):
+        url = m.group(0).rstrip('.,;:!?)')
+        try:
+            from urllib.parse import urlparse, urlunparse
+            p = urlparse(url)
+            normalized = urlunparse((
+                p.scheme.lower(),
+                p.netloc.lower(),
+                p.path,
+                p.params,
+                p.query,
+                '',  # strip fragment — anchor-only differences aren't meaningful
+            ))
+            urls.add(normalized)
+        except Exception:
+            urls.add(url.lower())
+    return frozenset(urls)
+
+
+_BENIGN_URL_HOSTS = frozenset({
+    'example.com', 'www.example.com',
+    'localhost', '127.0.0.1', '0.0.0.0',
+    'schema.org', 'json-ld.org',
+    'w3.org', 'www.w3.org',
+    'iana.org', 'www.iana.org',
+})
+
+
+def check_link_provenance(input_content: str, response: str) -> list[str]:
+    """
+    Detect chatgphish / output link substitution.
+
+    Compares URLs in the model's response against URLs present in the input
+    content.  Returns URLs that appear in the response but have NO provenance
+    in the input — these are candidates for attacker-injected redirect links.
+
+    Returns an empty list when the response is clean.
+    """
+    if not response:
+        return []
+    trusted = _extract_urls(input_content)
+    output   = _extract_urls(response)
+    injected = output - trusted
+    from urllib.parse import urlparse
+    suspicious = []
+    for u in sorted(injected):
+        try:
+            host = urlparse(u).netloc.lower().lstrip('www.')
+        except Exception:
+            host = ''
+        if host and host not in _BENIGN_URL_HOSTS:
+            suspicious.append(u)
+    return suspicious
+
+
 def build_artifact(
     calls: list[dict],
     detections: list[dict],
     fs_changes: list[str],
     content: str = "",
+    response: str = "",
 ) -> dict | None:
     content_signals = scan_content(content) if content else []
+    link_substitution = check_link_provenance(content, response) if content and response else []
 
-    if not calls and not detections and not fs_changes and not content_signals:
+    if not calls and not detections and not fs_changes and not content_signals and not link_substitution:
         return None
 
     sevs = []
@@ -1864,6 +1927,9 @@ def build_artifact(
     if content_signals:
         # Injection patterns in raw content — warm (static evidence, not executed)
         sevs.append("warm")
+    if link_substitution:
+        # Model produced URLs not present in the input — successful output manipulation
+        sevs.append("hot")
 
     severity = _max_severity(sevs)
 
@@ -1895,6 +1961,7 @@ def build_artifact(
         "detections":             detections,
         "content_signals":        content_signals,
         "fs_changes":             fs_changes,
+        "link_substitution":      link_substitution,
     }
 
     # Collect exfil targets from tool call args — scan keys, values, and nested dicts

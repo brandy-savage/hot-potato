@@ -165,7 +165,14 @@ def behavioral_check(content: str) -> dict:
         return {"complied": False, "response": "", "hits": [], "error": str(e)}
 
     hits = [m.group(0) for m in _BEHAVIORAL_COMPLIANCE_RE.finditer(response_text)]
-    return {"complied": bool(hits), "response": response_text[:500], "hits": hits[:5]}
+    from hot_potato._extractor import check_link_provenance
+    link_subs = check_link_provenance(content, response_text) if response_text else []
+    return {
+        "complied":          bool(hits),
+        "response":          response_text[:4000],
+        "hits":              hits[:5],
+        "link_substitution": link_subs,
+    }
 
 
 # ---------------------------------------------------------------------------
