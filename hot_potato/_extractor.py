@@ -1449,15 +1449,16 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                     if not re.search(r'send_http|get_env|bash_exec|exfil', raw, re.IGNORECASE):
                         continue
 
-            # 21. write_file / read_file listed in permission docs — skill files from app
-            #     platforms (Shopify, etc.) list tool permissions in tables like
-            #     "read_files,write_files | Orders & fulfillment".
+            # 21. write_file / read_file / execute_code listed in permission / capability
+            #     docs — skill files from app platforms list tool permissions in tables.
+            #     Also covers namespaced variants like `hex-line__write_file` or
+            #     `__penpot__execute_code`.
             #     Only suppress if it's a documentation list (no function call parens).
             #     Keep actual write_file(path=...) calls — those are real attacks.
-            if re.search(r'\bwrite_files?|\bread_files?', raw, re.IGNORECASE):
-                if not re.search(r'\bwrite_file\s*\(|\bread_file\s*\(', raw, re.IGNORECASE):
+            if re.search(r'write_files?|read_files?|execute_code', raw, re.IGNORECASE):
+                if not re.search(r'write_file\s*\(|read_file\s*\(|execute_code\s*\(', raw, re.IGNORECASE):
                     if not re.search(
-                        r'send_http|get_env|post_webhook|bash_exec|https?://|send_email|execute_code',
+                        r'send_http|get_env|post_webhook|bash_exec|https?://|send_email',
                         raw, re.IGNORECASE,
                     ):
                         continue
@@ -1529,9 +1530,11 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
 
             # 24. mnemonic / seed phrase in defensive or capability-listing context —
             #     wallet skill docs say "never display mnemonic phrases" or list
-            #     "export wallet/mnemonic" as a routing category. Only keep if
-            #     an exfil mechanism is also present.
-            if re.search(r'\bmnemonic\b', raw, re.IGNORECASE):
+            #     "export wallet/mnemonic" as a routing category.
+            #     "mnemonic" also appears as keyboard shortcut terminology (d(elete),
+            #     c(ommit)) and as assembly language instruction mnemonics.
+            #     Only keep if an exfil mechanism is also present.
+            if re.search(r'\bmnemonics?\b', raw, re.IGNORECASE):
                 if not re.search(r'https?://\S|send_http\s*\(|post_webhook\s*\(|bash_exec\s*\(|get_env\s*\(\)', raw, re.IGNORECASE):
                     continue
 
@@ -1547,6 +1550,125 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
             #     is a CLI flag description, not a prompt injection.
             if re.search(r'ignore\s+previous\s+context', raw, re.IGNORECASE):
                 if re.search(r'^\s*\||\|\s*$|\|\s*ignore\s+previous', raw, re.IGNORECASE | re.MULTILINE):
+                    continue
+
+            # 27. getenv as a config key / variable (no parentheses) —
+            #     TOML/Hugo config `getenv = ['^HUGO_', '^CI$']` or shell variable
+            #     `GETENV=1` are config settings, not tool calls.
+            if re.search(r'\bgetenv\b', raw, re.IGNORECASE):
+                if not re.search(r'\bgetenv\s*\(', raw, re.IGNORECASE):
+                    if not re.search(r'https?://|send_http|bash_exec|post_webhook', raw, re.IGNORECASE):
+                        continue
+
+            # 28. read_file / write_file with empty or variable-only args —
+            #     `read_file()`, `read_file($path)`, `read_file(&self, path: &Path)`
+            #     are function definitions or Perl/Rust references, not real reads.
+            if re.search(r'\b(?:read_file|write_file)\s*\(', raw, re.IGNORECASE):
+                inner_m = re.search(r'\b(?:read_file|write_file)\s*\(([^)]*)\)', raw, re.IGNORECASE)
+                if inner_m:
+                    inner = inner_m.group(1).strip()
+                    if (
+                        inner == ''  # empty args
+                        or re.match(r'^\$\w+$', inner)  # single Perl $var
+                        or re.match(r'^&\w[\w,\s:&*]*$', inner)  # Rust &self, path: &Path
+                        or re.match(r'^["\'][./~][^"\']*["\']$', inner)  # local path string
+                    ):
+                        if not re.search(r'send_http|bash_exec|get_env|post_webhook|https?://', raw, re.IGNORECASE):
+                            continue
+
+            # 29. <script src="bare-filename.js"> — relative script in Chinese docs
+            #     saying "don't use external loading". Bare filenames (no http://, no
+            #     directory separator) with common JS extensions are local project refs.
+            if re.search(r'<script\b', raw, re.IGNORECASE):
+                if re.search(r'<script\s[^>]*src\s*=\s*["\'][A-Za-z][^/"\']*\.(?:js|jsx|ts|tsx|mjs|cjs|vue|svelte)["\']', raw, re.IGNORECASE):
+                    continue
+
+            # 30. .env embedded in a filesystem path — config docs that say where
+            #     credentials are stored ("stored at ~/.config/app/.env") are describing
+            #     the file layout, not instructing extraction.
+            if re.search(r'\.env\b', raw, re.IGNORECASE):
+                if re.search(r'[/~]\S+/[^/\s]*\.env\b|<[^>]+>/[^/\s]*\.env\b', raw, re.IGNORECASE):
+                    if not re.search(r'send_http|bash_exec|get_env|post_webhook|https?://', raw, re.IGNORECASE):
+                        continue
+
+            # 31. "Indirect prompt injection" discussed as a security topic —
+            #     skill files that warn about third-party content risks are defensive.
+            if re.search(r'indirect\s+prompt\s+injection|prompt\s+injection.*third.party', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http\s*\(|bash_exec\s*\(|get_env\s*\(\)', raw, re.IGNORECASE):
+                    continue
+
+            # 32. compliance check / checklist in security and app-review skills —
+            #     "Automated compliance checking against CIS, PCI-DSS, HIPAA" or
+            #     "HIG Compliance Checklist" are audit feature descriptions, not injections.
+            if re.search(r'compliance\s+check|compliance\s+checklist', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http\s*\(|bash_exec\s*\(|get_env\s*\(\)', raw, re.IGNORECASE):
+                    continue
+
+            # 33. "Prompt injection" discussed as a security/education topic —
+            #     security review skills, agent middleware docs, and defensive checklists
+            #     mention "prompt injection" to describe a risk, not to perform an attack.
+            if re.search(r'prompt\s+injection', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http\s*\(|bash_exec\s*\(|get_env\s*\(\)', raw, re.IGNORECASE):
+                    continue
+
+            # 34. Spanish / Portuguese environment-variable section headers —
+            #     "Variables de Entorno", "variáveis de ambiente", "Variaveis de Ambiente"
+            #     are natural-language translations of "Environment Variables", not injections.
+            if re.search(
+                r'variables?\s+de\s+entorno|variáveis?\s+de\s+ambiente|variaveis?\s+de\s+ambiente',
+                raw, re.IGNORECASE,
+            ):
+                if not re.search(r'send_http|bash_exec|get_env\s*\(|post_webhook|https?://', raw, re.IGNORECASE):
+                    continue
+
+            # 35. stdlib getenv / Getenv / System.getenv with a string literal argument —
+            #     `os.Getenv("DATABASE_URL")`, `System.getenv("SERVER_NAME")`,
+            #     `getEnv("VERSION", "v1.0.0")` are code examples reading env vars
+            #     in generated MCP server templates. Only adversarial if no literal key + exfil.
+            if re.search(r'\b(?:os\.Getenv|System\.getenv|System\.get_env|getEnv)\s*\(', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http\s*\(|bash_exec\s*\(|post_webhook\s*\(', raw, re.IGNORECASE):
+                    continue
+
+            # 36. seed phrase in defensive / protective context — wallet skills warn
+            #     "use a strong password for your seed phrase" or "never share seed phrase".
+            if re.search(r'\bseed\s+phrase\b', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http\s*\(|bash_exec\s*\(|get_env\s*\(\)', raw, re.IGNORECASE):
+                    continue
+
+            # 37. onerror= in educational / code-example contexts —
+            #     `onerror="alert('XSS')"` in security education, `source.onerror = () => {}`
+            #     as a browser API event handler, `manager.onError = (url) =>` in three.js.
+            #     Rule 16 handles React JSX `onError=\{`; this covers the HTML attr / JS forms.
+            if re.search(r'\bonerror\s*=', raw, re.IGNORECASE):
+                # JS event handler assignment (source.onerror, manager.onError, etc.)
+                if re.search(r'\w+\s*\.\s*on[Ee]rror\s*=', raw):
+                    if not re.search(r'fetch\s*\(|https?://\S|send_http|document\.location', raw, re.IGNORECASE):
+                        continue
+                # HTML attribute in a security education / markdown example
+                if re.search(r'alert\s*\(|console\.', raw, re.IGNORECASE):
+                    if not re.search(r'fetch\s*\(|https?://\S|send_http|document\.location', raw, re.IGNORECASE):
+                        continue
+
+            # 38. cat .env | grep for verification — skill setup docs that show how to
+            #     check that an API key variable is set: `cat .env | grep API_KEY`.
+            if re.search(r'cat\s+\.env\s*\|', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http|bash_exec\s*\(|post_webhook', raw, re.IGNORECASE):
+                    continue
+
+            # 39. write_file / read_file in shell comment or docs — `# write_file(path)`
+            #     comment lines and signature documentation are definitional.
+            if re.search(r'#\s*(?:write_file|read_file)\s*\(|#\s*(?:write|read)\s+file\b', raw, re.IGNORECASE):
+                continue
+
+            # 40. mapbox CDN script src
+            if re.search(r'<script\b', raw, re.IGNORECASE):
+                if re.search(r'<script\s[^>]*src\s*=\s*["\']https?://(?:api\.mapbox\.com|cdn\.maptiler\.com)', raw, re.IGNORECASE):
+                    continue
+
+            # 41. "ignore previous session" / "ignore previous context" outside tables —
+            #     CLI flags like `--fresh` use "ignore previous session" as description text.
+            if re.search(r'ignore\s+previous\s+session', raw, re.IGNORECASE):
+                if not re.search(r'send_http|bash_exec|get_env\s*\(|https?://\S', raw, re.IGNORECASE):
                     continue
 
             filtered.append(hit)
