@@ -1347,7 +1347,7 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                 r'(?:store|save|put|set)\s+it\s+in\s+[`\'"]?\.env|'
                 r'get\s+the\s+connection\s+string.*\.env|'
                 r'\.env\s+(?:file|variable).*(?:store|save|set)|'
-                r'(?:does\s+not?\s+load|reads?|loads?|respects?|honors?|uses?|inherits?)\s+(?:from\s+)?[`\'"]?\.env\b|'
+                r'(?:does\s+not?\s+load|reads?|loads?|respects?|honors?|uses?|inherits?)\s+(?:\w+\s+)?(?:from\s+)?[`\'"]?\.env\b|'
                 r'\.env\s+(?:files?\s+)?(?:and|or)\s+(?:process\s+)?environment|'
                 r'(?:does\s+not\s+share|not\s+shared?|separate|different|own)\s+(?:the\s+)?(?:same\s+)?[`\'"]?\.env\b|'
                 r'[`\'"]?\.env\b.*(?:does\s+not\s+share|not\s+shared|separate\s+from)',
@@ -1371,9 +1371,10 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
 
             # 12. "read.*environment.*variabl" too broad — fires on "already been substituted
             #     ...no environment variable" because "already" contains "read" as substring.
+            #     Also fires on "reader is an engineer...environment variable" (unbounded .*).
             #     In skill docs this phrase is always documentation, not an exfil command.
             #     Only keep if paired with an explicit exfil destination.
-            if re.search(r'read.{0,80}environment.{0,20}variabl', raw, re.IGNORECASE):
+            if re.search(r'read.*environment.*variabl', raw, re.IGNORECASE):
                 if not re.search(
                     r'https?://|send_http|post_webhook|bash_exec|send_email|forward',
                     raw, re.IGNORECASE,
@@ -1507,9 +1508,45 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                     r'js\.stripe\.com|checkout\.stripe\.com|'
                     r'maps\.googleapis\.com|maps\.gstatic\.com|'
                     r'cdn\.auth0\.com|js\.intercomcdn\.com|'
-                    r'sdk\.amazonaws\.com|assets\.braintreegateway\.com)',
+                    r'sdk\.amazonaws\.com|assets\.braintreegateway\.com|'
+                    r'js\.sentry-cdn\.com|browser\.sentry-cdn\.com)',
                     raw, re.IGNORECASE,
                 ):
+                    continue
+
+            # 22. Tool calls with ellipsis placeholder args — documentation tables
+            #     show tool signatures like execute_code(code=..., session_id=...) as
+            #     examples.  Real injections never pass `...` as argument values.
+            #     Truncated [win] snippets may lack a closing paren, so we only require
+            #     the opening paren + at least one `...` argument.
+            if re.search(r'\b(?:execute_code|send_http|get_env|bash_exec|read_file|write_file|send_email|getenv|os\.getenv)\s*\([^)]*\.\.\.', raw, re.IGNORECASE):
+                continue
+
+            # 23. GraphQL query / mutation operations — `query getEnv($id: String!)`
+            #     is a GraphQL operation, not a tool call to get_env.
+            if re.search(r'(?:query|mutation)\s+\w+\s*\(\s*\$\w+\s*:', raw, re.IGNORECASE):
+                continue
+
+            # 24. mnemonic / seed phrase in defensive or capability-listing context —
+            #     wallet skill docs say "never display mnemonic phrases" or list
+            #     "export wallet/mnemonic" as a routing category. Only keep if
+            #     an exfil mechanism is also present.
+            if re.search(r'\bmnemonic\b', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http\s*\(|post_webhook\s*\(|bash_exec\s*\(|get_env\s*\(\)', raw, re.IGNORECASE):
+                    continue
+
+            # 25. transfer ETH / crypto in wallet skill capability descriptions —
+            #     "transfer ETH / USDC / etc., pay someone" is a capability listing,
+            #     not an instruction to steal funds without an exfil destination.
+            if re.search(r'transfer\s+ETH|transfer\s+crypto|transfer\s+USDC', raw, re.IGNORECASE):
+                if not re.search(r'https?://\S|send_http\s*\(|post_webhook\s*\(|bash_exec\s*\(', raw, re.IGNORECASE):
+                    continue
+
+            # 26. "Ignore previous context" in a markdown CLI flag table —
+            #     e.g. `| --fresh | false | Ignore previous context, start fresh |`
+            #     is a CLI flag description, not a prompt injection.
+            if re.search(r'ignore\s+previous\s+context', raw, re.IGNORECASE):
+                if re.search(r'^\s*\||\|\s*$|\|\s*ignore\s+previous', raw, re.IGNORECASE | re.MULTILINE):
                     continue
 
             filtered.append(hit)
