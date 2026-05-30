@@ -1732,7 +1732,7 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
             #     skill docs describe their API endpoints inline as "Make a POST request
             #     to `https://service.com/api/endpoint`".  Only adversarial if the URL
             #     contains shell expansions, template vars, or env var references.
-            if re.search(r'\bPOST\b.*https?://', raw, re.IGNORECASE):
+            if re.search(r'\bPOSTs?\b.*https?://', raw, re.IGNORECASE):
                 # Extract the URL portion after POST
                 url_m = re.search(r'https?://[^\s`\'"\]>]+', raw)
                 if url_m:
