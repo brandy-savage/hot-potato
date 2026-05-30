@@ -1208,6 +1208,14 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                             and not re.search(r'[=:{}\[\]"\']', inner)
                             and not re.search(r'\d+\.\d+', inner)):
                         continue
+                    # Single bare identifier (no spaces, no special chars, no .)  —
+                    # a parenthetical note like "Deploy (Vercel)" or "run (ci)", not a call
+                    if (not re.search(r'[\s=:{}\[\]"\'\./]', inner)
+                            and not re.search(r'\d', inner)):
+                        continue
+                    # Empty parens — documentation reference e.g. read_file()
+                    if inner == '':
+                        continue
 
             # 1. bare: signals — tool names mentioned in documentation are definitional.
             #    "deploy", "commit_code", "run_tests" etc. appear legitimately in every
@@ -1308,11 +1316,11 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                 if not re.search(r'(?:updated?|override|replace|changed?|modified?|now\s+requires?)', raw, re.IGNORECASE):
                     continue
 
-            # 6. Bare "exfiltrat" in defensive security discussion — skill files that
-            #    document what attacks look like (skill-creator, security scanners) mention
-            #    "exfiltration" without pairing it with an actual destination or tool call.
+            # 6. Bare "exfiltrat" / "exfil" in defensive security discussion — skill files
+            #    that document what attacks look like (threat matrices, security scanners)
+            #    mention "exfiltration" / "exfil" to label attack patterns, not perform them.
             #    Only keep if there's a concrete exfiltration mechanism alongside it.
-            if re.search(r'\bexfiltrat', raw, re.IGNORECASE):
+            if re.search(r'\bexfiltrat|\bexfil\b', raw, re.IGNORECASE):
                 if not re.search(
                     r'https?://|send_http|post_webhook|http_request|'
                     r'send_email|bash_exec|get_env|read_secrets|get_private_key',
@@ -1350,7 +1358,11 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                 r'(?:does\s+not?\s+load|reads?|loads?|respects?|honors?|uses?|inherits?)\s+(?:\w+\s+)?(?:from\s+)?[`\'"]?\.env\b|'
                 r'\.env\s+(?:files?\s+)?(?:and|or)\s+(?:process\s+)?environment|'
                 r'(?:does\s+not\s+share|not\s+shared?|separate|different|own)\s+(?:the\s+)?(?:same\s+)?[`\'"]?\.env\b|'
-                r'[`\'"]?\.env\b.*(?:does\s+not\s+share|not\s+shared|separate\s+from)',
+                r'[`\'"]?\.env\b.*(?:does\s+not\s+share|not\s+shared|separate\s+from)|'
+                r'\.env\b.*(?:to\s+git|gitignore|never\s+(?:commit|expose|push|share))|'
+                r'(?:never\s+(?:commit|expose|push|share)|gitignore).*\.env\b|'
+                r'\.env\b.*is\s+(?:not\s+)?found.*read\s+[`~]|'
+                r'no\s+(?:local\s+)?\.env\b.*found',
                 raw, re.IGNORECASE,
             ):
                 if not re.search(
@@ -1440,6 +1452,11 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                     raw, re.IGNORECASE,
                 ):
                     continue
+                # Bad-practice example: `document.cookie = "session=simple_string"` with no
+                # exfil mechanism — this is illustrating the antipattern, not performing it.
+                if re.search(r'document\.cookie\s*=\s*["\'][^"\']{0,40}["\']', raw, re.IGNORECASE):
+                    if not re.search(r'https?://|send_http|fetch\s*\(', raw, re.IGNORECASE):
+                        continue
 
             # 18. HTML type="submit" buttons with href — UI component examples from design
             #     system skills (Shopify Polaris etc.) show buttons with href attributes.
@@ -1510,7 +1527,9 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
                     r'maps\.googleapis\.com|maps\.gstatic\.com|'
                     r'cdn\.auth0\.com|js\.intercomcdn\.com|'
                     r'sdk\.amazonaws\.com|assets\.braintreegateway\.com|'
-                    r'js\.sentry-cdn\.com|browser\.sentry-cdn\.com)',
+                    r'js\.sentry-cdn\.com|browser\.sentry-cdn\.com|'
+                    r'd3js\.org|cdn\.plot\.ly|cdn\.bokeh\.org|'
+                    r'cdn\.highcharts\.com|code\.highcharts\.com)',
                     raw, re.IGNORECASE,
                 ):
                     continue
@@ -1555,9 +1574,16 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
             # 27. getenv as a config key / variable (no parentheses) —
             #     TOML/Hugo config `getenv = ['^HUGO_', '^CI$']` or shell variable
             #     `GETENV=1` are config settings, not tool calls.
-            if re.search(r'\bgetenv\b', raw, re.IGNORECASE):
-                if not re.search(r'\bgetenv\s*\(', raw, re.IGNORECASE):
+            #     Also covers `get_env("LITERAL_KEY")` SDK lookup (e.g. Elixir
+            #     `System.get_env("SENTRY_DSN")`), where a window snippet may drop
+            #     the `System.` prefix so rule 35 doesn't fire.
+            if re.search(r'\bget_?env\b', raw, re.IGNORECASE):
+                if not re.search(r'\bget_?env\s*\(', raw, re.IGNORECASE):
                     if not re.search(r'https?://|send_http|bash_exec|post_webhook', raw, re.IGNORECASE):
+                        continue
+                # get_env("LITERAL") — reading a specific named env var, not exfil
+                elif re.search(r'\bget_?env\s*\(["\']', raw, re.IGNORECASE):
+                    if not re.search(r'send_http|bash_exec|post_webhook|https?://\S', raw, re.IGNORECASE):
                         continue
 
             # 28. read_file / write_file with empty or variable-only args —
@@ -1670,6 +1696,85 @@ def scan_content(content: str, skill_file: bool = False) -> list[str]:
             if re.search(r'ignore\s+previous\s+session', raw, re.IGNORECASE):
                 if not re.search(r'send_http|bash_exec|get_env\s*\(|https?://\S', raw, re.IGNORECASE):
                     continue
+
+            # 42. "before proceeding to the next step…ask the user to confirm" —
+            #     multi-step workflow skills tell the agent to collect parameters from
+            #     the user before calling an API.  "Do NOT call" makes it clearly a
+            #     safety guard, not an override instruction.
+            if re.search(r'before\s+proceeding\s+to\s+the\s+next\s+step', raw, re.IGNORECASE):
+                if re.search(
+                    r'ask\s+the\s+user\s+to\s+confirm|Do\s+NOT\s+call|confirm\s+with\s+the\s+user',
+                    raw, re.IGNORECASE,
+                ):
+                    if not re.search(r'send_http|bash_exec|get_env\s*\(|https?://\S', raw, re.IGNORECASE):
+                        continue
+
+            # 43. "Agent self-reports – ALWAYS verify" in a trust table —
+            #     agent documentation that advises verifying self-reported status is
+            #     defensive, not an injection pattern.
+            if re.search(r'Agent\s+self-reports?\b', raw, re.IGNORECASE):
+                if re.search(r'ALWAYS\s+verify|always\s+verify|verify\b', raw, re.IGNORECASE):
+                    if not re.search(r'send_http|bash_exec|get_env\s*\(|https?://\S', raw, re.IGNORECASE):
+                        continue
+
+            # 44. Zero-width character density < 0.3% — skill files may have stray
+            #     Unicode formatting characters (zero-width joiners, non-breaking spaces)
+            #     from copy-pasted web content, Chinese/CJK text, or Markdown rendering.
+            #     A density below 0.3% (3 per thousand) is noise, not steganography.
+            if re.match(r'obfuscation:zero-width density', raw):
+                m = re.match(r'obfuscation:zero-width density (\d+)/(\d+)', raw)
+                if m:
+                    count, total = int(m.group(1)), int(m.group(2))
+                    if total > 0 and count / total < 0.003:
+                        continue
+
+            # 45. POST / single POST to a clean URL (no query params, no env refs) —
+            #     skill docs describe their API endpoints inline as "Make a POST request
+            #     to `https://service.com/api/endpoint`".  Only adversarial if the URL
+            #     contains shell expansions, template vars, or env var references.
+            if re.search(r'\bPOST\b.*https?://', raw, re.IGNORECASE):
+                # Extract the URL portion after POST
+                url_m = re.search(r'https?://[^\s`\'"\]>]+', raw)
+                if url_m:
+                    url = url_m.group(0)
+                    # Suspicious: shell expansion, template vars, env placeholders in URL
+                    if not re.search(r'[?&].*=|\$\{|\{\{|\$\(|get_env|read_env', url):
+                        # Also require no exfil context in the window
+                        if not re.search(r'get_env\s*\(|bash_exec|send_secret|read_secrets', raw, re.IGNORECASE):
+                            continue
+
+            # 46. read_file / write_file with typed parameter (e.g. Rust `path: String`,
+            #     `path: &str`, `path: PathBuf`) — function signature, not a real call.
+            if re.search(r'\b(?:read_file|write_file)\s*\(', raw, re.IGNORECASE):
+                inner_m = re.search(r'\b(?:read_file|write_file)\s*\(([^)]*)\)', raw, re.IGNORECASE)
+                if inner_m:
+                    inner = inner_m.group(1).strip()
+                    # Typed parameter: "path: String", "p: &str", "path: PathBuf", etc.
+                    if re.match(r'^\w+\s*:\s*[&\w]+[\w<>]*$', inner):
+                        if not re.search(r'send_http|bash_exec|get_env|post_webhook|https?://', raw, re.IGNORECASE):
+                            continue
+
+            # 47. icanhazip.com / ipify.org test requests — skill setup docs instruct
+            #     the agent to probe its own outbound IP for proxy/connectivity checks.
+            #     These are self-diagnostic, not data exfiltration.
+            #     The stored window snippet may be truncated (e.g. "icanhazip.c"),
+            #     so match on the domain stem rather than requiring the full TLD.
+            if re.search(r'icanhazip|https?://api\.ipify\.org', raw, re.IGNORECASE):
+                if not re.search(r'get_env\s*\(|bash_exec\s*\(|read_secrets|send_http\s*\(', raw, re.IGNORECASE):
+                    continue
+
+            # 48. `list.*tools?.*schema` in MCP skill docs — Composio / Rube MCP skills
+            #     instruct agents to "Always search tools first for current schemas",
+            #     meaning: look up the live MCP tool registry rather than relying on
+            #     cached definitions. This is dynamic tool discovery, not schema injection.
+            if re.search(r'list\b.*\btools?\b.*\bschemas?\b|Always\s+search\s+tools\s+first', raw, re.IGNORECASE):
+                if re.search(
+                    r'Always\s+search\s+tools\s+first|search\s+tools\s+first\s+for\s+current|'
+                    r'current\s+schemas?\b.*MCP|MCP.*current\s+schemas?|Composio',
+                    raw, re.IGNORECASE,
+                ):
+                    if not re.search(r'get_env\s*\(|bash_exec\s*\(|send_http\s*\(', raw, re.IGNORECASE):
+                        continue
 
             filtered.append(hit)
         deduped = filtered
