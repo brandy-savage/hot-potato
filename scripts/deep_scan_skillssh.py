@@ -1,5 +1,5 @@
 """
-Deep scan of 10,000+ skills from skills.sh.
+Deep scan of 10,000+ skills from skills.sh + GitHub code search.
 
 Tracks state persistently so runs can be resumed. Applies both the standard
 hot-potato injection scanner AND a second-pass "jailbreak/unlock" classifier
@@ -10,8 +10,13 @@ Usage:
   python3 scripts/deep_scan_skillssh.py --limit 10000 --workers 30
   python3 scripts/deep_scan_skillssh.py --resume           # skip already-seen
   python3 scripts/deep_scan_skillssh.py --report           # just print summary
+  python3 scripts/deep_scan_skillssh.py --behavioral       # LLM confirm flagged
+  python3 scripts/deep_scan_skillssh.py --behavioral-all   # LLM check ALL fetched
+  python3 scripts/deep_scan_skillssh.py --behavioral-rerun # retroactive LLM recheck
+  python3 scripts/deep_scan_skillssh.py --github-search    # discover via GH search
+  python3 scripts/deep_scan_skillssh.py --github-search --search-agents  # + AGENTS.md
 
-State file: skills_deep_scan_state.json  (append-only per-skill records)
+State file: skills_deep_scan_state.jsonl (append-only per-skill records)
 Report:     skills_deep_scan_report.json (written at end / --report)
 """
 from __future__ import annotations
@@ -294,15 +299,21 @@ def _gh_search_skill_files(
     extra_qualifier: str = "",
     per_page: int = 100,
     max_pages: int = 10,
+    filename_override: str = "SKILL.md",
 ) -> list[tuple[str, str, str]]:
     """One GitHub code-search query returning (owner, repo, skill) tuples.
 
     extra_qualifier is appended to the base query, e.g. "size:1..500".
     GitHub caps at 1000 results per query (max_pages * per_page ≤ 1000).
+    filename_override selects which agent-instruction filename to search.
     """
     results: list[tuple[str, str, str]] = []
     seen: set[str] = set()
-    base_q = f"filename:SKILL.md path:skills {extra_qualifier}".strip()
+    # SKILL.md: search inside skills/ dirs. AGENTS.md/CLAUDE.md: broader search.
+    if filename_override == "SKILL.md":
+        base_q = f"filename:SKILL.md path:skills {extra_qualifier}".strip()
+    else:
+        base_q = f"filename:{filename_override} {extra_qualifier}".strip()
     headers = {
         "User-Agent": UA,
         "Authorization": f"token {gh_token}",
@@ -389,18 +400,26 @@ _GH_SIZE_BUCKETS = [
     "size:>15000",
 ]
 
+# Additional agent instruction filename patterns to search (beyond SKILL.md)
+_GH_AGENT_FILENAMES = [
+    ("AGENTS.md", ""),           # OpenAI Codex / general agent instructions
+    ("CLAUDE.md", ""),           # Claude Code project instructions
+    ("CLAUDE.md", "path:skills"),# Claude skills specifically
+    ("SKILL.md", "NOT path:.github"),  # Skip .github repo files
+]
 
-def fetch_skill_urls_github(gh_token: str, limit: int) -> list[tuple[str, str, str]]:
-    """Enumerate SKILL.md files via GitHub code search, using size buckets to
-    exceed the 1000-results-per-query cap.  Returns up to *limit* (owner, repo,
-    skill) tuples, deduplicated across all buckets."""
+
+def fetch_skill_urls_github(gh_token: str, limit: int, search_agents: bool = False) -> list[tuple[str, str, str]]:
+    """Enumerate SKILL.md (and optionally AGENTS.md/CLAUDE.md) files via GitHub
+    code search, using size buckets to exceed the 1000-results-per-query cap.
+    Returns up to *limit* (owner, repo, skill) tuples, deduplicated."""
     seen: set[str] = set()
     results: list[tuple[str, str, str]] = []
 
     for bucket in _GH_SIZE_BUCKETS:
         if len(results) >= limit:
             break
-        print(f"  [github-search] bucket {bucket} ...", flush=True)
+        print(f"  [github-search] SKILL.md bucket {bucket} ...", flush=True)
         batch = _gh_search_skill_files(gh_token, extra_qualifier=bucket)
         added = 0
         for item in batch:
@@ -412,6 +431,26 @@ def fetch_skill_urls_github(gh_token: str, limit: int) -> list[tuple[str, str, s
         print(f"    → {added} new  (total {len(results)})", flush=True)
         # Wait between buckets — code search rate limit is 30/min so 30s is safe
         time.sleep(30)
+
+    if search_agents:
+        for fname, qualifier in [("AGENTS.md", ""), ("CLAUDE.md", "path:skills")]:
+            if len(results) >= limit:
+                break
+            print(f"  [github-search] {fname} {qualifier}...", flush=True)
+            batch = _gh_search_skill_files(
+                gh_token,
+                extra_qualifier=qualifier,
+                filename_override=fname,
+            )
+            added = 0
+            for item in batch:
+                key = f"{item[0]}/{item[1]}/{item[2]}"
+                if key not in seen and len(results) < limit:
+                    seen.add(key)
+                    results.append(item)
+                    added += 1
+            print(f"    → {added} new  (total {len(results)})", flush=True)
+            time.sleep(30)
 
     return results
 
@@ -455,11 +494,106 @@ def load_all_results() -> list[dict]:
     return results
 
 
+def load_latest_results() -> list[dict]:
+    """Like load_all_results but deduplicates — only the most recent entry per
+    owner/repo/skill key is returned. Handles retroactive behavioral reruns that
+    append updated records without overwriting originals."""
+    all_results = load_all_results()
+    latest: dict[str, dict] = {}
+    for r in all_results:
+        key = f"{r.get('owner','')}/{r.get('repo','')}/{r.get('skill','')}"
+        latest[key] = r  # last write wins
+    return list(latest.values())
+
+
+def run_behavioral_rerun(workers: int, model: str | None = None) -> None:
+    """Retroactively run behavioral checks on all fetched skills that lack one.
+
+    Loads all unique results from the state file, picks those with a URL but
+    no behavioral check, re-fetches each and runs behavioral_check(), then
+    appends the updated record to the state file.
+    """
+    if model:
+        globals()["BEHAVIORAL_MODEL"] = model
+
+    print(f"  [behavioral-rerun] model={BEHAVIORAL_MODEL} workers={workers}")
+
+    results = load_latest_results()
+    need = [
+        r for r in results
+        if r.get("url")
+        and r.get("status") != "fetch_failed"
+        and not r.get("behavioral")
+    ]
+    print(f"  [behavioral-rerun] {len(need)} entries need behavioral check")
+
+    done = 0
+    confirmed = 0
+    start = time.time()
+
+    def _recheck(entry: dict) -> dict | None:
+        url = entry.get("url", "")
+        if not url:
+            return None
+        content = _get(url, timeout=15)
+        if not content or len(content.strip()) < 20:
+            return None
+        bcheck = behavioral_check(content)
+        updated = dict(entry)
+        updated["behavioral"] = bcheck
+        updated["behavioral_rerun"] = True
+        if bcheck.get("complied"):
+            base = entry["status"].replace("CONFIRMED_", "")
+            if base in ("INJECTION", "JAILBREAK", "UNLOCK_SOFT", "SCAM"):
+                updated["status"] = "CONFIRMED_" + base
+            else:
+                updated["status"] = "CONFIRMED_INJECTION"
+        return updated
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_recheck, r): r for r in need}
+        for fut in as_completed(futures):
+            result = fut.result()
+            entry = futures[fut]
+            if result:
+                append_result(result)
+                if result.get("behavioral", {}).get("complied"):
+                    confirmed += 1
+                    print(
+                        f"\n  !! BEHAVIORAL COMPLIED  "
+                        f"{entry['owner']}/{entry['repo']}/{entry['skill']}"
+                        f"  was:{entry['status']} → {result['status']}"
+                    )
+                    for h in result["behavioral"].get("hits", [])[:2]:
+                        print(f"     {h[:130]}")
+            done += 1
+            if done % 200 == 0:
+                elapsed = time.time() - start
+                rate = done / elapsed
+                eta = (len(need) - done) / rate if rate > 0 else 0
+                print(
+                    f"  [{done}/{len(need)}] {elapsed:.0f}s  "
+                    f"rate={rate:.2f}/s  ETA={eta:.0f}s  "
+                    f"confirmed={confirmed}",
+                    flush=True,
+                )
+
+    elapsed = time.time() - start
+    print(f"\n[behavioral-rerun] done in {elapsed:.0f}s")
+    print(f"  {done} checked, {confirmed} confirmed compliant")
+    if confirmed:
+        print("  Writing updated report...")
+        results = load_latest_results()
+        report = build_report(results)
+        REPORT_FILE.write_text(json.dumps(report, indent=2))
+        print(f"  Report → {REPORT_FILE}")
+
+
 # ---------------------------------------------------------------------------
 # Per-skill scan
 # ---------------------------------------------------------------------------
 
-def scan_skill(owner: str, repo: str, skill: str, run_behavioral: bool = False) -> dict:
+def scan_skill(owner: str, repo: str, skill: str, run_behavioral: bool = False, behavioral_all: bool = False) -> dict:
     result = fetch_skill_content(owner, repo, skill)
     if result is None:
         return {
@@ -494,12 +628,16 @@ def scan_skill(owner: str, repo: str, skill: str, run_behavioral: bool = False) 
         "content_len": len(content),
     }
 
-    # Behavioral upgrade: run flagged skills through local LLM to confirm compliance
-    if run_behavioral and category in ("INJECTION", "JAILBREAK", "UNLOCK_SOFT"):
+    # Behavioral upgrade: run flagged skills (or all, if behavioral_all) through
+    # local Ollama LLM to confirm whether the model actually complies.
+    if run_behavioral and (behavioral_all or category in ("INJECTION", "JAILBREAK", "UNLOCK_SOFT")):
         bcheck = behavioral_check(content)
         out["behavioral"] = bcheck
         if bcheck.get("complied"):
-            out["status"] = "CONFIRMED_" + category
+            if category in ("INJECTION", "JAILBREAK", "UNLOCK_SOFT"):
+                out["status"] = "CONFIRMED_" + category
+            elif category == "clean":
+                out["status"] = "CONFIRMED_INJECTION"  # clean static but LLM complied
 
     return out
 
@@ -552,9 +690,15 @@ def main() -> None:
     ap.add_argument("--gh-token", default=None,
                     help="GitHub personal access token (or set GITHUB_TOKEN env var)")
     ap.add_argument("--behavioral", action="store_true",
-                    help="Run flagged skills through local Ollama LLM to confirm behavioral compliance")
+                    help="Run flagged skills (INJECTION/JAILBREAK/UNLOCK_SOFT) through local Ollama LLM")
+    ap.add_argument("--behavioral-all", action="store_true",
+                    help="Run ALL successfully fetched skills through local Ollama LLM (not just flagged)")
+    ap.add_argument("--behavioral-rerun", action="store_true",
+                    help="Retroactively run behavioral checks on all entries that lack one and re-append")
     ap.add_argument("--behavioral-model", default=None,
                     help=f"Ollama model for behavioral check (default: {BEHAVIORAL_MODEL})")
+    ap.add_argument("--search-agents", action="store_true",
+                    help="Also search GitHub for AGENTS.md and CLAUDE.md (requires --github-search)")
     args = ap.parse_args()
 
     if args.report:
@@ -568,6 +712,15 @@ def main() -> None:
         print(f"  INJECTION:   {report['INJECTION']}")
         print(f"  fetch_failed:{report['fetch_failed']}")
         print(f"Report → {REPORT_FILE}")
+        return
+
+    if args.behavioral_rerun:
+        if args.behavioral_model:
+            globals()["BEHAVIORAL_MODEL"] = args.behavioral_model
+        run_behavioral_rerun(
+            workers=min(args.workers, 8),
+            model=args.behavioral_model,
+        )
         return
 
     if args.fresh and STATE_FILE.exists():
@@ -591,7 +744,8 @@ def main() -> None:
             print("ERROR: --github-search requires a GitHub token. Pass --gh-token or set GITHUB_TOKEN.")
             sys.exit(1)
         print(f"  [github-search] enumerating SKILL.md via GitHub code search...")
-        all_urls = fetch_skill_urls_github(gh_token, args.limit + len(seen))
+        all_urls = fetch_skill_urls_github(gh_token, args.limit + len(seen),
+                                           search_agents=args.search_agents)
         print(f"  [github-search] found {len(all_urls)} unique skills across size buckets")
     else:
         all_urls = fetch_all_skill_urls(args.limit + len(seen))
@@ -600,15 +754,13 @@ def main() -> None:
                if f"{o}/{r}/{s}" not in seen][:args.limit]
     print(f"  fetched {len(all_urls)} URLs, {len(pending)} pending after seen-filter")
 
-    run_behavioral = args.behavioral
+    behavioral_all = args.behavioral_all
+    run_behavioral = args.behavioral or behavioral_all
     if run_behavioral and args.behavioral_model:
-        import hot_potato._extractor  # noqa — just to check sys.path
-        import __main__ as _m
-        # Override the module-level constant
-        import scripts.deep_scan_skillssh as _self  # type: ignore
         globals()["BEHAVIORAL_MODEL"] = args.behavioral_model
     if run_behavioral:
-        print(f"  [behavioral] enabled — using model {BEHAVIORAL_MODEL} at {OLLAMA_HOST}")
+        mode = "ALL skills" if behavioral_all else "flagged skills only"
+        print(f"  [behavioral] enabled ({mode}) — using model {BEHAVIORAL_MODEL} at {OLLAMA_HOST}")
 
     counts: dict = {"JAILBREAK": 0, "SCAM": 0, "UNLOCK_SOFT": 0, "INJECTION": 0,
                     "CONFIRMED_INJECTION": 0, "CONFIRMED_JAILBREAK": 0,
@@ -617,7 +769,7 @@ def main() -> None:
     start = time.time()
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(scan_skill, o, r, s, run_behavioral): (o, r, s)
+        futures = {pool.submit(scan_skill, o, r, s, run_behavioral, behavioral_all): (o, r, s)
                    for o, r, s in pending}
 
         for fut in as_completed(futures):
