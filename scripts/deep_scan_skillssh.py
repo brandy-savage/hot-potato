@@ -10,11 +10,14 @@ Usage:
   python3 scripts/deep_scan_skillssh.py --limit 10000 --workers 30
   python3 scripts/deep_scan_skillssh.py --resume           # skip already-seen
   python3 scripts/deep_scan_skillssh.py --report           # just print summary
-  python3 scripts/deep_scan_skillssh.py --behavioral       # LLM confirm flagged
-  python3 scripts/deep_scan_skillssh.py --behavioral-all   # LLM check ALL fetched
-  python3 scripts/deep_scan_skillssh.py --behavioral-rerun # retroactive LLM recheck
-  python3 scripts/deep_scan_skillssh.py --github-search    # discover via GH search
-  python3 scripts/deep_scan_skillssh.py --github-search --search-agents  # + AGENTS.md
+  python3 scripts/deep_scan_skillssh.py --behavioral                         # LLM confirm flagged (Ollama)
+  python3 scripts/deep_scan_skillssh.py --behavioral-all                    # LLM check ALL fetched
+  python3 scripts/deep_scan_skillssh.py --behavioral-rerun                  # retroactive LLM recheck
+  python3 scripts/deep_scan_skillssh.py --behavioral-backend groq \
+      --groq-token $GROQ_API_KEY --groq-model llama-3.3-70b-versatile \
+      --behavioral-all                                                       # Groq as sacrificial AI
+  python3 scripts/deep_scan_skillssh.py --github-search                     # discover via GH search
+  python3 scripts/deep_scan_skillssh.py --github-search --search-agents     # + AGENTS.md
 
 State file: skills_deep_scan_state.jsonl (append-only per-skill records)
 Report:     skills_deep_scan_report.json (written at end / --report)
@@ -145,11 +148,16 @@ _BEHAVIORAL_COMPLIANCE_RE = re.compile(
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 BEHAVIORAL_MODEL = os.environ.get("HP_BEHAVIORAL_MODEL", "qwen2.5:7b")
 
+# Groq backend — uses OpenAI-compatible REST, no extra dependencies
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("HP_GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
-def behavioral_check(content: str) -> dict:
-    """Feed content to local Ollama LLM and check if it complies with any injection.
-    Returns {"complied": bool, "response": str, "hits": list[str]}."""
-    prompt = _BEHAVIORAL_PROMPT.format(content=content[:3000])
+# "ollama" or "groq"
+BEHAVIORAL_BACKEND = os.environ.get("HP_BEHAVIORAL_BACKEND", "ollama")
+
+
+def _behavioral_call_ollama(prompt: str) -> str:
     payload = json.dumps({
         "model": BEHAVIORAL_MODEL,
         "prompt": prompt,
@@ -162,12 +170,49 @@ def behavioral_check(content: str) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read()).get("response", "")
+
+
+def _behavioral_call_groq(prompt: str) -> str:
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not set — pass --groq-token or set the env var")
+    payload = json.dumps({
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0,
+        "max_tokens": 400,
+        "stream": False,
+    }).encode()
+    req = urllib.request.Request(
+        GROQ_ENDPOINT,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        resp = json.loads(r.read())
+    return resp["choices"][0]["message"]["content"]
+
+
+def behavioral_check(content: str) -> dict:
+    """Feed content to a sacrificial LLM and check whether it complies with any injection.
+
+    Backend is selected by BEHAVIORAL_BACKEND global: "ollama" (local) or "groq" (cloud).
+    Returns {"complied": bool, "response": str, "hits": list[str], "backend": str}.
+    """
+    prompt = _BEHAVIORAL_PROMPT.format(content=content[:3000])
+    backend = BEHAVIORAL_BACKEND
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            resp = json.loads(r.read())
-        response_text = resp.get("response", "")
+        if backend == "groq":
+            response_text = _behavioral_call_groq(prompt)
+        else:
+            response_text = _behavioral_call_ollama(prompt)
     except Exception as e:
-        return {"complied": False, "response": "", "hits": [], "error": str(e)}
+        return {"complied": False, "response": "", "hits": [], "backend": backend, "error": str(e)}
 
     hits = [m.group(0) for m in _BEHAVIORAL_COMPLIANCE_RE.finditer(response_text)]
     from hot_potato._extractor import check_link_provenance
@@ -177,6 +222,7 @@ def behavioral_check(content: str) -> dict:
         "response":          response_text[:4000],
         "hits":              hits[:5],
         "link_substitution": link_subs,
+        "backend":           backend,
     }
 
 
@@ -516,7 +562,10 @@ def run_behavioral_rerun(workers: int, model: str | None = None) -> None:
     if model:
         globals()["BEHAVIORAL_MODEL"] = model
 
-    print(f"  [behavioral-rerun] model={BEHAVIORAL_MODEL} workers={workers}")
+    if BEHAVIORAL_BACKEND == "groq":
+        print(f"  [behavioral-rerun] backend=groq  model={GROQ_MODEL}  workers={workers}")
+    else:
+        print(f"  [behavioral-rerun] backend=ollama  model={BEHAVIORAL_MODEL}  workers={workers}")
 
     results = load_latest_results()
     need = [
@@ -697,6 +746,12 @@ def main() -> None:
                     help="Retroactively run behavioral checks on all entries that lack one and re-append")
     ap.add_argument("--behavioral-model", default=None,
                     help=f"Ollama model for behavioral check (default: {BEHAVIORAL_MODEL})")
+    ap.add_argument("--behavioral-backend", default=None, choices=["ollama", "groq"],
+                    help="Backend for behavioral check: ollama (local) or groq (cloud, default: ollama)")
+    ap.add_argument("--groq-token", default=None,
+                    help="Groq API key (or set GROQ_API_KEY env var)")
+    ap.add_argument("--groq-model", default=None,
+                    help=f"Groq model for behavioral check (default: {GROQ_MODEL})")
     ap.add_argument("--search-agents", action="store_true",
                     help="Also search GitHub for AGENTS.md and CLAUDE.md (requires --github-search)")
     args = ap.parse_args()
@@ -714,12 +769,20 @@ def main() -> None:
         print(f"Report → {REPORT_FILE}")
         return
 
+    # Resolve behavioral backend globals before any behavioral work
+    if args.groq_token:
+        globals()["GROQ_API_KEY"] = args.groq_token
+    if args.groq_model:
+        globals()["GROQ_MODEL"] = args.groq_model
+    if args.behavioral_backend:
+        globals()["BEHAVIORAL_BACKEND"] = args.behavioral_backend
+    if args.behavioral_model:
+        globals()["BEHAVIORAL_MODEL"] = args.behavioral_model
+
     if args.behavioral_rerun:
-        if args.behavioral_model:
-            globals()["BEHAVIORAL_MODEL"] = args.behavioral_model
         run_behavioral_rerun(
             workers=min(args.workers, 8),
-            model=args.behavioral_model,
+            model=None,  # already applied above
         )
         return
 
@@ -756,11 +819,12 @@ def main() -> None:
 
     behavioral_all = args.behavioral_all
     run_behavioral = args.behavioral or behavioral_all
-    if run_behavioral and args.behavioral_model:
-        globals()["BEHAVIORAL_MODEL"] = args.behavioral_model
     if run_behavioral:
         mode = "ALL skills" if behavioral_all else "flagged skills only"
-        print(f"  [behavioral] enabled ({mode}) — using model {BEHAVIORAL_MODEL} at {OLLAMA_HOST}")
+        if BEHAVIORAL_BACKEND == "groq":
+            print(f"  [behavioral] enabled ({mode}) — backend=groq  model={GROQ_MODEL}")
+        else:
+            print(f"  [behavioral] enabled ({mode}) — backend=ollama  model={BEHAVIORAL_MODEL}  host={OLLAMA_HOST}")
 
     counts: dict = {"JAILBREAK": 0, "SCAM": 0, "UNLOCK_SOFT": 0, "INJECTION": 0,
                     "CONFIRMED_INJECTION": 0, "CONFIRMED_JAILBREAK": 0,
