@@ -304,6 +304,33 @@ class HeuristicPreFilter(BaseDetector):
         re.IGNORECASE,
     )
 
+    # OSX gaslight — cat92
+    # Fake OS/runtime/scanner error messages claiming the safety analysis layer has
+    # crashed, timed out, or been pre-cleared by an upstream authority. Goal: convince
+    # the model that its own injection detector cannot run, so it should skip analysis.
+    # Distinct from privilege_escalation (which claims permissions) and fake_authority
+    # (which impersonates trusted humans) — this targets the tooling layer itself.
+    _ANALYSIS_DISABLE_RE = re.compile(
+        # Pattern 1: named tool/scanner + failure verb (mirrors _extractor.py; no DOTALL — Bug B fix).
+        r"(?:scanner|analys(?:is|er|izer)|safety[\s._-]check|content[\s._-](?:check|review)|"
+        r"hot[\s._-]potato|injection[\s._-]detect(?:or)?|validator|guardrail)"
+        r"\s+(?:timed?\s*out|failed|aborted|crashed|terminated|killed|panicked|"
+        r"is\s+(?:offline|unavailable|disabled|not\s+responding))|"
+        # Pattern 2: explicit bypass with optional article (Bug E fix).
+        r"(?:skip|bypass|omit|proceed\s+without)\s+(?:the\s+|all\s+|any\s+|local\s+|this\s+)?"
+        r"(?:content|safety|security|injection)[\s._-](?:check|scan|analys(?:is)?|review|detect(?:ion)?)|"
+        # Pattern 3: structured log-level prefix — bracket or bare `ERROR:` / `] FATAL:` (Bug D fix).
+        r"(?:\[(?:ERROR|FATAL|CRITICAL)\]|\b(?:ERROR|FATAL|CRITICAL)\s*:|\]\s+(?:ERROR|FATAL|CRITICAL)\s*:)"
+        r"\s*(?:scan|analys|safety|content|injection)|"
+        r"treat\s+(?:this|the)\s+(?:content|input|payload)\s+as\s+(?:already[\s-])?(?:clean|safe|verified|trusted|cleared)\b|"
+        r"resume\s+(?:normal\s+)?(?:operation|execution|processing)\s+without\s+(?:the\s+)?(?:check|scan|analys|safety)|"
+        r"content\s+analysis\s+module\s+(?:is\s+)?(?:offline|unavailable|disabled|not\s+responding)|"
+        r"safety\s+check[s]?\s+(?:disabled|suspended|bypassed)\s+for\s+(?:this\s+)?(?:session|request|input)|"
+        r"(?:local|on.?premise|in.?process)\s+(?:analysis|scan|check|validation)\s+(?:is\s+)?(?:skipped|not\s+required|unnecessary|disabled|bypassed)\b|"
+        r"upstream\s+(?:trust\s+)?(?:verdict|oracle|scan|clearance)\s+(?:is\s+)?(?:authoritative|supersedes|overrides)",
+        re.IGNORECASE,
+    )
+
     # PAIR / TAP reasoning trap — cat81
     # Iterative logical argumentation that walks the model to voluntary compliance.
     # No authority override keywords — instead uses premise/conclusion scaffolding,
@@ -371,6 +398,11 @@ class HeuristicPreFilter(BaseDetector):
         if self._TIME_CONDITIONAL_RE.search(content):
             artifact.add_tags("conditional_trigger", "time_conditional")
             log.debug("BehavioralDetector: time_conditional in %s", artifact.source[:60])
+            flagged = True
+
+        if self._ANALYSIS_DISABLE_RE.search(content):
+            artifact.add_tags("analysis_disable", "gaslight_error")
+            log.debug("BehavioralDetector: analysis_disable (gaslight) in %s", artifact.source[:60])
             flagged = True
 
         artifact.record_exposure(self.name, "detector", "flagged" if flagged else "clean")

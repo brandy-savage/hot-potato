@@ -834,7 +834,54 @@ _DETECTION_SIGNALS = re.compile(
     r"config\.patch\b.{0,60}gateway.*auth|gateway.*auth.*mode.*none\b|"
     # centminmod gap — Attack #29: Config self-modification via openclaw CLI
     # Injection instructs the agent to run "openclaw config set" to weaken security settings.
-    r"openclaw\s+config\s+set\s+(?:gateway\.auth|dmPolicy|tools\.exec\.security|tools\.shell\.security)\b"
+    r"openclaw\s+config\s+set\s+(?:gateway\.auth|dmPolicy|tools\.exec\.security|tools\.shell\.security)\b|"
+    # cat89 gap — .github/setup.{js,sh,...} is the canonical Miasma worm dropper path (June 2026).
+    # Legitimate prose does not reference this path in run/command/execute contexts.
+    r"\.github/setup\.(?:js|mjs|ts|tsx|sh|py)\b|"
+    # cat89 gap — "Run `node .github/..." is the exact Cursor rules social-engineering phrase.
+    # Backtick-quoted shell invocation pointing at .github/ has no legitimate documentation use.
+    r"[Rr]un\s+[\x60'\"]{1}(?:node|python3?|bash|sh|bun|deno)\s+\.github/|"
+    # cat89 gap — SessionStart hook registration in untrusted JSON content. Operator-authored
+    # .claude/settings.json is TrustLevel.TRUSTED and never reaches this scanner; in UNTRUSTED
+    # content "SessionStart":[...] signals an injected hook that fires before the LLM session opens.
+    r'"SessionStart"\s*:\s*\[|'
+    # cat89 gap — Precise agent-hook pattern: "type":"command" + shell binary + .github/ path.
+    # Matches the JSON structure that .claude/settings.json and .gemini/settings.json use to
+    # register arbitrary shell commands as SessionStart hooks from a cloned repository.
+    r'"type"\s*:\s*"command"[\s\S]{0,200}"command"\s*:\s*"(?:node|python3?|bash|sh|bun|deno)[^"]*\.github/|'
+    # cat89 gap — "runOn":"folderOpen" is the VS Code task auto-execute trigger. In untrusted
+    # repo content this registers code execution on folder open without any user interaction.
+    r'"runOn"\s*:\s*"folderOpen"|'
+    # cat92 — OSX gaslight: fake system errors to disable content analysis.
+    # Attacker embeds fake OS/runtime/scanner error messages to convince the LLM that its
+    # own safety tooling has crashed or timed out, so it skips analysis and treats the
+    # content as clean. Distinct from cat69 (task injection via support framing) — this
+    # targets the analysis layer itself, not the user's task.
+    #
+    # Pattern 1: named tool/scanner + failure verb. Extended vocab vs. first draft:
+    # - content[\s._-](?:check|review) (was check-only — Bug C)
+    # - terminated|killed|panicked (crash vocab gap)
+    # - validator|guardrail (scanner synonym gap)
+    r"(?:scanner|analys(?:is|er|izer)|safety[\s._-]check|content[\s._-](?:check|review)|"
+    r"hot[\s._-]potato|injection[\s._-]detect(?:or)?|validator|guardrail)"
+    r"\s+(?:timed?\s*out|failed|aborted|crashed|terminated|killed|panicked|"
+    r"is\s+(?:offline|unavailable|disabled|not\s+responding))|"
+    # Pattern 2: explicit bypass instruction. Optional article closes single-word evasion
+    # (e.g. "skip the safety check" — Bug E).
+    r"(?:skip|bypass|omit|proceed\s+without)\s+(?:the\s+|all\s+|any\s+|local\s+|this\s+)?"
+    r"(?:content|safety|security|injection)[\s._-](?:check|scan|analys(?:is)?|review|detect(?:ion)?)|"
+    # Pattern 3: structured log-level prefix. Extended to catch bare `ERROR:` / `FATAL:`
+    # and `[timestamp] FATAL:` formats that the bracket-only form missed (Bug D).
+    r"(?:\[(?:ERROR|FATAL|CRITICAL)\]|\b(?:ERROR|FATAL|CRITICAL)\s*:|\]\s+(?:ERROR|FATAL|CRITICAL)\s*:)"
+    r"\s*(?:scan|analys|safety|content|injection)|"
+    r"treat\s+(?:this|the)\s+(?:content|input|payload)\s+as\s+(?:already[\s-])?(?:clean|safe|verified|trusted|cleared)\b|"
+    r"resume\s+(?:normal\s+)?(?:operation|execution|processing)\s+without\s+(?:the\s+)?(?:check|scan|analys|safety)|"
+    r"content\s+analysis\s+module\s+(?:is\s+)?(?:offline|unavailable|disabled|not\s+responding)|"
+    r"safety\s+check[s]?\s+(?:disabled|suspended|bypassed)\s+for\s+(?:this\s+)?(?:session|request|input)|"
+    # Soft gaslight: upstream oracle / cached-verdict framing with no explicit error log.
+    # Covers the "local analysis skipped — upstream verdict is authoritative" pattern.
+    r"(?:local|on.?premise|in.?process)\s+(?:analysis|scan|check|validation)\s+(?:is\s+)?(?:skipped|not\s+required|unnecessary|disabled|bypassed)\b|"
+    r"upstream\s+(?:trust\s+)?(?:verdict|oracle|scan|clearance)\s+(?:is\s+)?(?:authoritative|supersedes|overrides)"
     r")",
     re.IGNORECASE,
 )
