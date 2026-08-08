@@ -26,9 +26,14 @@ LOG_FILE     = Path("/sandbox/logs/tool_calls.jsonl")
 RAW_LOG_FILE = Path("/sandbox/logs/raw_responses.jsonl")
 MAX_TURNS    = int(os.getenv("HP_MAX_TURNS", "6"))
 OLLAMA_URL   = "http://localhost:11434"
-# Context window cap — 0 means use model default. Set HP_NUM_CTX=512 to simulate
-# small-context deployments where long content gets truncated (cat26/cat7 gap).
-NUM_CTX      = int(os.getenv("HP_NUM_CTX", "0"))
+# Context window. 0 (default) means "use the model's own trained max context",
+# resolved at startup via /api/show. Ollama's own runtime default is a flat
+# 4096 regardless of what the model actually supports, which silently
+# truncates long content before it ever reaches the model. Set HP_NUM_CTX to a
+# specific value (e.g. 512) to simulate small-context deployments instead
+# (cat26/cat7 gap).
+NUM_CTX_OVERRIDE = int(os.getenv("HP_NUM_CTX", "0"))
+_ACTIVE_NUM_CTX: int | None = None  # resolved once, lazily, in ollama_chat()
 # Chunk mode — split content into overlapping chunks, evaluate each as a separate
 # user turn. Simulates RAG-style chunked ingestion. 0 = disabled (default).
 CHUNK_SIZE    = int(os.getenv("HP_CHUNK_SIZE", "0"))
@@ -583,14 +588,49 @@ def extract_tool_calls(message: dict) -> list[dict]:
     return calls
 
 
+def resolve_num_ctx(model: str) -> int | None:
+    """
+    Pick the num_ctx to send to Ollama. HP_NUM_CTX>0 is an explicit override
+    (used to simulate small-context deployments). Otherwise look up the
+    model's own trained max context length via /api/show, so the sacrificial
+    AI gets its full context instead of silently landing on Ollama's flat
+    4096-token runtime default. Falls back to None (Ollama default) if the
+    lookup fails.
+    """
+    if NUM_CTX_OVERRIDE > 0:
+        return NUM_CTX_OVERRIDE
+    try:
+        req = urllib.request.Request(
+            f"{OLLAMA_URL}/api/show",
+            data=json.dumps({"model": model}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            info = json.loads(resp.read())
+        model_info = info.get("model_info", {})
+        arch = model_info.get("general.architecture", "")
+        max_ctx = model_info.get(f"{arch}.context_length")
+        if isinstance(max_ctx, int) and max_ctx > 0:
+            return max_ctx
+    except Exception as exc:
+        print(f"[entrypoint] WARNING: could not resolve max context for "
+              f"{model}, falling back to Ollama default: {exc}", flush=True)
+    return None
+
+
 def ollama_chat(messages: list, tools: list | None = None) -> dict:
     """
     Call Ollama chat API. Returns the full message dict (not just content string)
     so callers can inspect both .content and .tool_calls.
     """
+    global _ACTIVE_NUM_CTX
+    if _ACTIVE_NUM_CTX is None:
+        _ACTIVE_NUM_CTX = resolve_num_ctx(MODEL) or 0
+        print(f"[entrypoint] num_ctx: {_ACTIVE_NUM_CTX or 'Ollama default (lookup failed)'}",
+              flush=True)
     opts = {"temperature": 0.7, "num_predict": 1024}
-    if NUM_CTX > 0:
-        opts["num_ctx"] = NUM_CTX
+    if _ACTIVE_NUM_CTX > 0:
+        opts["num_ctx"] = _ACTIVE_NUM_CTX
     body: dict = {
         "model":    MODEL,
         "messages": messages,

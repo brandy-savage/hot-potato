@@ -498,6 +498,7 @@ AI agents reading skill files, SDK docs, or how-to guides are vulnerable to inje
 | `GROQ_API_KEY` | — | Groq API key (or `--groq-token`) |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama API endpoint |
 | `HP_BACKEND` | `docker` | Sandbox backend: `docker` or `native` |
+| `HP_NUM_CTX` | `0` | Sacrificial-AI context window override. `0` = use the model's own trained max (resolved via `/api/show`); set to a specific value (e.g. `512`) to simulate small-context deployments |
 
 ---
 
