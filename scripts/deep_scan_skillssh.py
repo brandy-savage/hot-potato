@@ -219,12 +219,48 @@ def _deobfuscate_for_behavioral(content: str) -> str:
     return "\n".join(lines)
 
 
+_num_ctx_cache: dict[str, int] = {}
+
+
+def _resolve_behavioral_num_ctx(model: str) -> int | None:
+    """
+    Look up the sacrificial model's own trained max context length via
+    /api/show, so the behavioral oracle gets its full context instead of
+    silently landing on Ollama's flat 4096-token runtime default. Cached
+    per model. Returns None (Ollama default) if the lookup fails.
+    """
+    if model in _num_ctx_cache:
+        return _num_ctx_cache[model]
+    try:
+        req = urllib.request.Request(
+            f"{OLLAMA_HOST}/api/show",
+            data=json.dumps({"model": model}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            info = json.loads(r.read())
+        model_info = info.get("model_info", {})
+        arch = model_info.get("general.architecture", "")
+        max_ctx = model_info.get(f"{arch}.context_length")
+        if isinstance(max_ctx, int) and max_ctx > 0:
+            _num_ctx_cache[model] = max_ctx
+            return max_ctx
+    except Exception as exc:
+        print(f"[deep-scan] WARNING: could not resolve max context for "
+              f"{model}, falling back to Ollama default: {exc}", flush=True)
+    return None
+
+
 def _behavioral_call_ollama(prompt: str) -> str:
+    opts = {"temperature": 0, "num_predict": 600}
+    num_ctx = _resolve_behavioral_num_ctx(BEHAVIORAL_MODEL)
+    if num_ctx:
+        opts["num_ctx"] = num_ctx
     payload = json.dumps({
         "model": BEHAVIORAL_MODEL,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0, "num_predict": 600},
+        "options": opts,
     }).encode()
     req = urllib.request.Request(
         f"{OLLAMA_HOST}/api/generate",

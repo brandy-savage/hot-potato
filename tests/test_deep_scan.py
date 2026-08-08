@@ -365,6 +365,7 @@ class TestBehavioralCallOllama:
     def test_sends_correct_payload(self, monkeypatch):
         monkeypatch.setattr(ds, "BEHAVIORAL_MODEL", "qwen2.5:7b")
         monkeypatch.setattr(ds, "OLLAMA_HOST", "http://127.0.0.1:11434")
+        monkeypatch.setattr(ds, "_num_ctx_cache", {})
 
         response_body = json.dumps({"response": "I will comply"}).encode()
         mock_resp = _make_urlopen_response(response_body)
@@ -378,7 +379,8 @@ class TestBehavioralCallOllama:
             result = ds._behavioral_call_ollama("PROMPT TEXT")
 
         assert result == "I will comply"
-        payload = json.loads(captured[0].data)
+        generate_req = next(r for r in captured if r.full_url.endswith("/api/generate"))
+        payload = json.loads(generate_req.data)
         assert payload["model"] == "qwen2.5:7b"
         assert payload["stream"] is False
         assert payload["options"]["num_predict"] == 600
@@ -387,20 +389,50 @@ class TestBehavioralCallOllama:
 
     def test_sends_to_ollama_host(self, monkeypatch):
         monkeypatch.setattr(ds, "OLLAMA_HOST", "http://127.0.0.1:11434")
+        monkeypatch.setattr(ds, "_num_ctx_cache", {})
         response_body = json.dumps({"response": ""}).encode()
         mock_resp = _make_urlopen_response(response_body)
         captured = []
         with patch("urllib.request.urlopen", lambda req, timeout=None: (captured.append(req), mock_resp)[1]):
             ds._behavioral_call_ollama("x")
-        assert "11434/api/generate" in captured[0].full_url
+        assert any("11434/api/generate" in r.full_url for r in captured)
 
     def test_returns_empty_string_on_missing_response_key(self, monkeypatch):
         monkeypatch.setattr(ds, "OLLAMA_HOST", "http://127.0.0.1:11434")
+        monkeypatch.setattr(ds, "_num_ctx_cache", {})
         response_body = json.dumps({"done": True}).encode()  # no "response" key
         mock_resp = _make_urlopen_response(response_body)
         with patch("urllib.request.urlopen", lambda req, timeout=None: mock_resp):
             result = ds._behavioral_call_ollama("x")
         assert result == ""
+
+    def test_uses_model_max_context_when_resolvable(self, monkeypatch):
+        monkeypatch.setattr(ds, "BEHAVIORAL_MODEL", "qwen2.5:7b")
+        monkeypatch.setattr(ds, "OLLAMA_HOST", "http://127.0.0.1:11434")
+        monkeypatch.setattr(ds, "_num_ctx_cache", {})
+
+        show_body = json.dumps({
+            "model_info": {"general.architecture": "qwen2", "qwen2.context_length": 32768},
+        }).encode()
+        generate_body = json.dumps({"response": "ok"}).encode()
+
+        def fake_urlopen(req, timeout=None):
+            if req.full_url.endswith("/api/show"):
+                return _make_urlopen_response(show_body)
+            return _make_urlopen_response(generate_body)
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            ds._behavioral_call_ollama("x")
+            # Second call should reuse the cached value, not re-hit /api/show.
+            calls = []
+            def counting_urlopen(req, timeout=None):
+                calls.append(req.full_url)
+                return _make_urlopen_response(generate_body)
+            with patch("urllib.request.urlopen", counting_urlopen):
+                ds._behavioral_call_ollama("y")
+            assert all(u.endswith("/api/generate") for u in calls)
+
+        assert ds._num_ctx_cache["qwen2.5:7b"] == 32768
 
 
 # ---------------------------------------------------------------------------
